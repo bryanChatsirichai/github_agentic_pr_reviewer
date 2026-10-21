@@ -13,3 +13,7 @@ memory/
 
 # Tooling caches
 .pytest_cache/
+.ruff_cache/
+
+# Graphify knowledge graph
+graphify-out/

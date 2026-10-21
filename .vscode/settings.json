@@ -1,0 +1,9 @@
+{
+  // Keep the Explorer clean: hide generated/caches from view.
+  // (They still exist on disk — this only affects display.)
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true
+  }
+}
