@@ -22,14 +22,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI args. Returns Namespace with `.pr` (int) and `.event` (str)."""
     parser = argparse.ArgumentParser(description="Agentic PR reviewer")
     # Which PR to review — GitHub PR number, e.g. 123 in github.com/you/repo/pull/123.
-    # Defaults to 0 for smoke-test runs triggered by a plain push (no PR context).
+    # Defaults to 0 for manual dispatch runs (no PR context).
     parser.add_argument("--pr", type=int, default=0, help="Pull request number")
-    # Why we're running — one of the four GitHub Actions event types:
+    # Why we're running — the GitHub Actions event types the workflow sends:
     #   opened      → pull_request trigger: PR created (full review).
     #   synchronize → pull_request trigger: commit pushed to open PR branch
     #                 (incremental review + re-check of previous findings).
     #   reopened    → pull_request trigger: closed PR opened again (full review).
-    #   push        → push trigger: any branch push with no PR (smoke test).
+    #   push        → manual dispatch only: "Run workflow" button / gh CLI
+    #                 (testing path — the push trigger itself is not enabled).
     parser.add_argument(
         "--event",
         choices=["opened", "synchronize", "reopened", "push"],
