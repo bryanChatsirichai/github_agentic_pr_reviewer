@@ -12,6 +12,8 @@ on:
   # Real review: PR opened / new commit pushed to the PR branch / reopened.
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:      # ← manual "Run workflow" button
+
 
 # TODO later steps: read-only repo access for GitHub client (Step 2)
 # permissions:

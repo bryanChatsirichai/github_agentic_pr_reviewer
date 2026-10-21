@@ -24,7 +24,16 @@ uv run python orchestrator/main.py --pr <PR_NUMBER> --event <EVENT>
 
 | Argument | Required | Values | Meaning |
 |---|---|---|---|
-| `--pr` | yes | any integer | Pull request number to review (the number in the GitHub URL: `github.com/you/repo/pull/123`). In CI this is filled in automatically by the GitHub Actions workflow. |
-| `--event` | yes | `opened` · `synchronize` · `reopened` | The GitHub event that triggered the review. `opened` = PR newly created (full review, all findings new). `synchronize` = new commit pushed (incremental review + re-check of previous findings). `reopened` = a closed PR opened again (full review, keeping prior memory). |
+| `--pr` | yes | any integer | Pull request number to review (the number in the GitHub URL: `github.com/you/repo/pull/123`). In CI this is filled in automatically by the GitHub Actions workflow. Defaults to `0` for smoke-test runs. |
+| `--event` | yes | see table below | The GitHub event that triggered the review. |
+
+**Event values** (exactly what the GitHub Actions workflow can send):
+
+| Value | Sent by | When |
+|---|---|---|
+| `opened` | `pull_request` trigger | PR created |
+| `synchronize` | `pull_request` trigger | Commit pushed to open PR branch |
+| `reopened` | `pull_request` trigger | Closed PR opened again |
+| `push` | `push` trigger (via `\|\| 'push'` fallback) | Any branch push with no PR |
 
 Invalid values (e.g. `--pr abc`, a missing argument, or an unknown event) are rejected with a usage message and exit code 2. A successful run logs a startup line and exits 0.
