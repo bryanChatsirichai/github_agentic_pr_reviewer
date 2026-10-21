@@ -1,28 +1,26 @@
 # Step 1 — GitHub Actions trigger.
-# Two paths: PR events run the real review; plain pushes run a smoke test.
-# Secrets and env wiring are commented out until later steps need them.
+# PR events (opened / new commit / reopened) run the review; manual dispatch
+# is the no-commit test button. Secrets and env wiring are commented out
+# until later steps need them.
 name: pr-review
 
 on:
-  # Smoke test: any branch push with no PR → --pr 0 --event push.
-  # Note: pushing to a branch that has an open PR fires BOTH this and the
-  # pull_request trigger below (two runs). Fine for now — the concurrency
-  # TODO below will cancel superseded runs later.
-  push:
-  # Real review: PR opened / new commit pushed to the PR branch / reopened.
+  # Real review: PR created / new commit pushed to the PR branch / reopened.
+  # Pushes to branches WITHOUT an open PR trigger nothing (by design).
   pull_request:
     types: [opened, synchronize, reopened]
-  workflow_dispatch:      # ← manual "Run workflow" button
+  # Manual testing: "Run workflow" button / `gh workflow run` — no PR context,
+  # falls back to --pr 0 --event push.
+  workflow_dispatch:
 
+# One in-flight run per PR (per ref for manual runs); newer cancels older.
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 # TODO later steps: read-only repo access for GitHub client (Step 2)
 # permissions:
 #   contents: read
-
-# TODO later steps: cancel superseded in-flight reviews on new commits
-# concurrency:
-#   group: pr-review-${{ github.event.pull_request.number }}
-#   cancel-in-progress: true
 
 jobs:
   review:
@@ -49,7 +47,7 @@ jobs:
 
       - name: Run PR reviewer
         # PR events → github.event.* are set (real review).
-        # Plain push → both are empty → fallbacks give --pr 0 --event push.
+        # Manual dispatch → both are empty → fallbacks give --pr 0 --event push.
         run: |
           uv run python orchestrator/main.py \
             --pr "${{ github.event.pull_request.number || 0 }}" \

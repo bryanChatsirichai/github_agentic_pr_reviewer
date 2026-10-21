@@ -77,7 +77,7 @@ tests/                 # empty pytest package (baseline)
 
 ### [ ] Step 1 — GitHub Actions trigger
 
-**Goal:** A push to any branch runs a smoke test; a PR event (opened / new commit / reopened) boots the Python entry point in CI.
+**Goal:** A PR event (opened / new commit / reopened) boots the Python entry point in CI; a manual dispatch provides a no-commit test path.
 
 **Depends on:** Step 0.
 
@@ -88,11 +88,11 @@ tests/                 # empty pytest package (baseline)
 ```
 
 **Tasks:**
-1. Workflow: `on: push` (any branch — smoke test) + `pull_request: [opened, synchronize, reopened]` (real review path).
+1. Workflow: `on: pull_request: [opened, synchronize, reopened]` (real review path — pushes to branches without an open PR trigger nothing) + `workflow_dispatch` (manual testing) + a `concurrency` group per PR that cancels superseded in-flight runs.
 2. Job: checkout → setup Python 3.12 (or use `astral-sh/setup-uv`, which handles both) → `uv sync` → `uv run python orchestrator/main.py`, with PR number and event name passed via env.
 3. Provide `GITHUB_TOKEN` / `AI_API_KEY` from secrets (unused for now, wired for later steps).
 
-**Done when:** Push a commit to any branch (smoke-test run, `--pr 0`) and open a draft PR against this repo (review run); the Actions runs go green and the logs show the startup line with the correct PR number and event type.
+**Done when:** Open a draft PR against this repo and push a commit to it (review runs, correct PR number and event type in logs); trigger a manual dispatch run (test path, `--pr 0`); both go green.
 
 ---
 
