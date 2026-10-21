@@ -25,9 +25,29 @@ General rules:
 
 ---
 
+## Progress
+
+- [x] Step 0 — General project setup
+- [ ] Step 1 — GitHub Actions trigger
+- [ ] Step 2 — GitHub client module
+- [ ] Step 3 — PR context builder
+- [ ] Step 4 — First LLM review (no memory, no graph)
+- [ ] Step 5 — Re-review on every commit (still stateless)
+- [ ] Step 6 — Finding store (JSON memory)
+- [ ] Step 7 — Wire memory into the review flow
+- [ ] Step 8 — Incremental diff
+- [ ] Step 9 — Finding re-check pass
+- [ ] Step 10 — LangGraph graph skeleton
+- [ ] Step 11 — Tools layer
+- [ ] Step 12 — Critic (verification loop)
+- [ ] Step 13 — Judge + confidence policy
+- [ ] Step 14 — Specialized reviewers
+
+---
+
 ## Phase A — Setup
 
-### Step 0 — General project setup
+### [x] Step 0 — General project setup
 
 **Goal:** A working Python project with tooling and configuration in place — no application code beyond a trivial entry point.
 
@@ -55,7 +75,7 @@ tests/                 # empty pytest package (baseline)
 
 ---
 
-### Step 1 — GitHub Actions trigger
+### [ ] Step 1 — GitHub Actions trigger
 
 **Goal:** A PR event on this repo boots the Python entry point in CI.
 
@@ -78,7 +98,7 @@ tests/                 # empty pytest package (baseline)
 
 ## Phase B — Minimal end-to-end review (stateless)
 
-### Step 2 — GitHub client module
+### [ ] Step 2 — GitHub client module
 
 **Goal:** All GitHub reads/writes the rest of the system needs, behind one module, testable offline.
 
@@ -105,7 +125,7 @@ Also adds `pygithub` via `uv add pygithub`.
 
 ---
 
-### Step 3 — PR context builder
+### [ ] Step 3 — PR context builder
 
 **Goal:** Turn raw GitHub data into one context object every agent consumes.
 
@@ -128,7 +148,7 @@ tests/test_context.py
 
 ---
 
-### Step 4 — First LLM review (no memory, no graph)
+### [ ] Step 4 — First LLM review (no memory, no graph)
 
 **Goal:** The complete design §29 "first implementation" loop: PR → LLM → comment.
 
@@ -157,7 +177,7 @@ Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 
 ---
 
-### Step 5 — Re-review on every commit (still stateless)
+### [ ] Step 5 — Re-review on every commit (still stateless)
 
 **Goal:** `synchronize` events produce a fresh review — proves the repeat half of the loop works, even without memory.
 
@@ -175,7 +195,7 @@ Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 
 ## Phase C — Memory
 
-### Step 6 — Finding store (JSON memory)
+### [ ] Step 6 — Finding store (JSON memory)
 
 **Goal:** Persist per-PR review state that survives workflow runs.
 
@@ -199,7 +219,7 @@ Implement the real `orchestrator/memory.py` (replacing the Step 4 stub).
 
 ---
 
-### Step 7 — Wire memory into the review flow
+### [ ] Step 7 — Wire memory into the review flow
 
 **Goal:** The agent becomes stateful: loads previous findings before reviewing, saves after posting.
 
@@ -224,7 +244,7 @@ agents/prompts/logic-reviewer.md   # gains a "previous findings" section
 
 ## Phase D — Incremental review & finding re-check
 
-### Step 8 — Incremental diff
+### [ ] Step 8 — Incremental diff
 
 **Goal:** Review only `previous_sha → head_sha` on synchronize instead of the whole PR.
 
@@ -246,7 +266,7 @@ tests/test_diff.py
 
 ---
 
-### Step 9 — Finding re-check pass (the core differentiator)
+### [ ] Step 9 — Finding re-check pass (the core differentiator)
 
 **Goal:** Previous findings are explicitly re-checked and their statuses updated — including regression detection.
 
@@ -272,7 +292,7 @@ tests/test_recheck.py
 
 ## Phase E — Agentic structure (the prototype)
 
-### Step 10 — LangGraph graph skeleton
+### [ ] Step 10 — LangGraph graph skeleton
 
 **Goal:** Replace the linear main flow with an explicit graph, one node per stage — same behavior, new skeleton.
 
@@ -295,7 +315,7 @@ Also adds `langgraph` via `uv add langgraph`. `main.py` shrinks to: parse args �
 
 ---
 
-### Step 11 — Tools layer (agents can investigate)
+### [ ] Step 11 — Tools layer (agents can investigate)
 
 **Goal:** Reviewer agents can call tools instead of trusting the diff alone.
 
@@ -318,7 +338,7 @@ tools/__init__.py
 
 ---
 
-### Step 12 — Critic (verification loop)
+### [ ] Step 12 — Critic (verification loop)
 
 **Goal:** Suspicious findings get challenged with evidence before reaching GitHub.
 
@@ -341,7 +361,7 @@ agents/prompts/critic.md
 
 ---
 
-### Step 13 — Judge + confidence policy
+### [ ] Step 13 — Judge + confidence policy
 
 **Goal:** Final posting decision is centralized and threshold-driven.
 
@@ -364,7 +384,7 @@ agents/prompts/judge.md
 
 ---
 
-### Step 14 — Specialized reviewers
+### [ ] Step 14 — Specialized reviewers
 
 **Goal:** Logic, Security, and Testing reviewers run in parallel; results merge into the critic.
 

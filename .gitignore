@@ -1,0 +1,15 @@
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# uv / virtualenv
+.venv/
+
+# Runtime review state (per-PR memory)
+memory/
+
+# Tooling caches
+.pytest_cache/
