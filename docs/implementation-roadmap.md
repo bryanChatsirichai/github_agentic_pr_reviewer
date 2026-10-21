@@ -28,7 +28,7 @@ General rules:
 ## Progress
 
 - [x] Step 0 — General project setup
-- [ ] Step 1 — GitHub Actions trigger
+- [x] Step 1 — GitHub Actions trigger
 - [ ] Step 2 — GitHub client module
 - [ ] Step 3 — PR context builder
 - [ ] Step 4 — First LLM review (no memory, no graph)
