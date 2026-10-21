@@ -1,0 +1,54 @@
+# Step 1 — GitHub Actions trigger.
+# Two paths: PR events run the real review; plain pushes run a smoke test.
+# Secrets and env wiring are commented out until later steps need them.
+name: pr-review
+
+on:
+  # Smoke test: any branch push with no PR → --pr 0 --event push.
+  # Note: pushing to a branch that has an open PR fires BOTH this and the
+  # pull_request trigger below (two runs). Fine for now — the concurrency
+  # TODO below will cancel superseded runs later.
+  push:
+  # Real review: PR opened / new commit pushed to the PR branch / reopened.
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# TODO later steps: read-only repo access for GitHub client (Step 2)
+# permissions:
+#   contents: read
+
+# TODO later steps: cancel superseded in-flight reviews on new commits
+# concurrency:
+#   group: pr-review-${{ github.event.pull_request.number }}
+#   cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # TODO later steps: wire secrets + env
+    # env:
+    #   PR_NUMBER: ${{ github.event.pull_request.number }}
+    #   PR_EVENT: ${{ github.event.action }}
+    #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   AI_API_KEY: ${{ secrets.AI_API_KEY }}
+    #   MODEL_NAME: gpt-4o
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv and set up Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Run PR reviewer
+        # PR events → github.event.* are set (real review).
+        # Plain push → both are empty → fallbacks give --pr 0 --event push.
+        run: |
+          uv run python orchestrator/main.py \
+            --pr "${{ github.event.pull_request.number || 0 }}" \
+            --event "${{ github.event.action || 'push' }}"
