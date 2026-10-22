@@ -1,13 +1,18 @@
 """Entry point for the agentic PR reviewer.
 
-Step 0: parse --pr and --event, log a startup line, exit cleanly.
-Later steps grow the review pipeline into this skeleton.
+Step 0 skeleton + Step 2 sanity check: parse --pr and --event, verify the
+GitHub token, exit cleanly. Later steps grow the review pipeline.
 """
 
 import argparse
 import logging
 
 from dotenv import load_dotenv
+
+try:  # imported as a package (tests, python -m orchestrator.main)
+    from .github_client import verify_connection
+except ImportError:  # run as a script: python orchestrator/main.py
+    from github_client import verify_connection
 
 load_dotenv()
 
@@ -43,6 +48,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logger.info("Starting review for PR #%s (event: %s)", args.pr, args.event)
+    # Sanity check: fail fast if the token is missing/bad before doing work.
+    login = verify_connection()
+    logger.info("Token authenticated as: %s", login)
     # Review pipeline lands here in later steps.
     return 0
 

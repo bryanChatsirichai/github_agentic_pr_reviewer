@@ -18,20 +18,20 @@ concurrency:
   group: pr-review-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# TODO later steps: read-only repo access for GitHub client (Step 2)
-# permissions:
-#   contents: read
+# TODO later steps: tighten to read-only (contents: read) once posting lands
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   review:
     runs-on: ubuntu-latest
-    # TODO later steps: wire secrets + env
-    # env:
-    #   PR_NUMBER: ${{ github.event.pull_request.number }}
-    #   PR_EVENT: ${{ github.event.action }}
-    #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #   AI_API_KEY: ${{ secrets.AI_API_KEY }}
-    #   MODEL_NAME: gpt-4o
+    env:
+      # `secrets.GITHUB_TOKEN` is provisioned automatically by Actions.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      # TODO Step 4+: LLM access
+      # AI_API_KEY: ${{ secrets.AI_API_KEY }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

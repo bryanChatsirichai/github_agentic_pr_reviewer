@@ -4,13 +4,14 @@ An agentic pull-request review system: GitHub PR events trigger LLM-driven revie
 
 Design: [`docs/agentic-pr-review-system-design.v1.md`](docs/agentic-pr-review-system-design.v1.md)
 Roadmap: [`docs/implementation-roadmap.md`](docs/implementation-roadmap.md)
+Framework decision: [`docs/framework-decision.md`](docs/framework-decision.md)
 
 ## Quickstart
 
 Requires [uv](https://docs.astral.sh/uv/).
 
 ```bash
-cp .env.example .env   # fill in GITHUB_TOKEN, AI_API_KEY, MODEL_NAME
+cp .env.example .env   # fill in GITHUB_TOKEN and GITHUB_REPOSITORY (owner/repo)
 uv sync                # install deps (Python 3.12 managed by uv)
 uv run python orchestrator/main.py --pr 123 --event opened
 uv run pytest          # test suite

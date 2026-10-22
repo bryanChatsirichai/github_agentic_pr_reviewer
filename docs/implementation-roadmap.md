@@ -29,7 +29,7 @@ General rules:
 
 - [x] Step 0 — General project setup
 - [x] Step 1 — GitHub Actions trigger
-- [ ] Step 2 — GitHub client module
+- [x] Step 2 — GitHub client module
 - [ ] Step 3 — PR context builder
 - [ ] Step 4 — First LLM review (no memory, no graph)
 - [ ] Step 5 — Re-review on every commit (still stateless)
@@ -120,6 +120,8 @@ Also adds `pygithub` via `uv add pygithub`.
 4. `get_existing_review_comments(pr_number)` → prior comments from our bot (identified by a marker like `🤖 AI Review`).
 5. `post_review_comment(pr_number, body)` → single summary comment.
 6. Client is injected so tests can mock it; fixture covers one realistic PR.
+
+Note: this module is **orchestrator plumbing, not agent tools**. The pipeline calls it deterministically every run (Step 3 packs the results into `PRContext` for the agents). Agents never fetch PR data or post comments themselves — see design "Orchestrator data vs. agent tools". Agent tools arrive in Step 11 and work against the repo on disk.
 
 **Done when:** Unit tests with mocked client pass for all six functions, and a manual run against a real test PR returns the correct diff.
 
@@ -295,6 +297,8 @@ tests/test_recheck.py
 ### [ ] Step 10 — LangGraph graph skeleton
 
 **Goal:** Replace the linear main flow with an explicit graph, one node per stage — same behavior, new skeleton.
+
+**Framework decision:** LangGraph 1.x, hand-built `StateGraph` with Pydantic state — see [`framework-decision.md`](framework-decision.md).
 
 **Depends on:** Step 9 (behavior must be complete and green *before* restructuring).
 

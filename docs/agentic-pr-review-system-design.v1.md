@@ -2,7 +2,7 @@
 
 > **Status:** Draft / Design Proposal  
 > **Purpose:** Learning project and evolving architecture  
-> **Last updated:** 2026-10-19 (multi-repository architecture added)
+> **Last updated:** 2026-10-22 (agent framework decision: LangGraph — see [`framework-decision.md`](framework-decision.md))
 
 ---
 
@@ -611,6 +611,50 @@ For the first implementation, use **JSON or a small SQLite/PostgreSQL database**
 
 Agents should be able to use tools to investigate findings.
 
+## Orchestrator data vs. agent tools — who fetches what
+
+A distinction that matters before reading the tool lists below:
+
+**PR data is fetched by the orchestrator, not by agents.** Before any
+agent runs, the pipeline (Steps 2–3) calls the GitHub client
+(`orchestrator/github_client.py`) and packs everything into a
+`PRContext` object:
+
+```text
+PR event
+  │
+  ▼
+orchestrator/main.py
+  │  get_pull_request() / get_pr_files() / get_pr_diff()
+  │  get_existing_review_comments()        ← pipeline calls these, every run
+  ▼
+PRContext  ──── handed to agents as prompt input
+  │
+  ▼
+Agents review what is already in front of them
+```
+
+- PR metadata, changed files, the diff, and prior bot comments arrive in the
+  prompt — agents never request them. Making an LLM decide to fetch data that
+  every run needs would only burn tokens and risk the step being skipped.
+- Posting to GitHub is orchestrator-only, after the judge decides what gets
+  reported. Agents never post directly — one hallucination would otherwise
+  mean public spam on the PR.
+- The `repo` / `client` injection parameters on `github_client.py` functions
+  exist so **tests** can mock them and run offline. They are not an agent
+  interface.
+
+**Agent tools are for optional investigation** that the pre-fetched PR data
+cannot cover: "the diff calls `parse_config()` — let me read that function to
+check whether it can return None." Those tools (below) run against the
+checked-out repository on disk — fast, free, no API rate limits — not the
+GitHub API.
+
+| Who | Fetches | When |
+|---|---|---|
+| Orchestrator | PR metadata, files, diff, prior comments | Always, before the review starts |
+| Agents | Repo files, git history, code search | Only when they choose to investigate |
+
 ## Git tools
 
 Examples:
@@ -659,20 +703,24 @@ depending on the repository.
 
 ## GitHub tools
 
-Examples:
+The GitHub client (`orchestrator/github_client.py`) is **orchestrator
+plumbing, not an agent tool** — see "Orchestrator data vs. agent tools" above.
+For the prototype, agents get no GitHub API access at all: everything they
+need about the PR is already in `PRContext`.
+
+If a future step genuinely needs GitHub-API investigation from an agent
+(e.g., fetching CI status mid-review), wrap the relevant client function in a
+thin read-only adapter in `tools/`. Writes (`create review`, `create comment`,
+`reply`, `resolve thread`) stay orchestrator-only permanently:
 
 ```text
-get PR
-get PR files
-get commits
-get review comments
-get review threads
-create review
-create comment
-reply to comment
-resolve thread
-get CI status
+read-only (adapter candidates):        orchestrator-only (never tools):
+  get commits                           create review
+  get review comments                   create comment
+  get review threads                    reply to comment
+  get CI status                         resolve thread
 ```
+
 
 ## Security tools
 
@@ -1246,7 +1294,7 @@ Ready for human review.
 | Repository | GitHub |
 | Event trigger | GitHub Actions |
 | Orchestration | Python |
-| Agent workflow | LangGraph (candidate) |
+| Agent workflow | LangGraph 1.x — [decided](framework-decision.md) |
 | Agent runtime / harness | OpenCode (optional / later experiment) |
 | Model | Claude / GPT / Gemini |
 | Tool protocol | MCP |
@@ -1843,9 +1891,7 @@ These should remain open while the project is being developed.
 
 ### Agent runtime
 
-- OpenCode?
-- Custom Python agent?
-- Other agent framework?
+- ~~OpenCode? Custom Python agent? Other agent framework?~~ **Decided 2026-10-22: LangGraph 1.x** — see [`framework-decision.md`](framework-decision.md) (LangGraph vs CrewAI vs LangChain evaluation).
 
 ### Models
 
