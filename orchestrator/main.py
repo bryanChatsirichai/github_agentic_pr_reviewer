@@ -1,8 +1,9 @@
 """Entry point for the agentic PR reviewer.
 
-Step 0 skeleton + Step 2 sanity check: parse --pr and --event, verify the
-GitHub token, exit cleanly. Later steps grow the review pipeline. Run as a
-module from the repo root: ``python -m orchestrator.main``.
+Step 0 skeleton + Step 2 sanity check (verify the GitHub token) + bare-minimum
+Step 4 (call the LLM once and log its reply). Later steps grow this into the
+full review pipeline. Run as a module from the repo root:
+``python -m orchestrator.main``.
 """
 
 import argparse
@@ -10,6 +11,7 @@ import logging
 
 from dotenv import load_dotenv
 
+from agents.llm import get_llm
 from clients.github import verify_connection
 
 load_dotenv()
@@ -50,7 +52,13 @@ def main(argv: list[str] | None = None) -> int:
     # Returns the repo full name — CI's secrets.GITHUB_TOKEN has no user login.
     repo_full_name = verify_connection()
     logger.info("GitHub token OK for repo: %s", repo_full_name)
-    # Review pipeline lands here in later steps.
+    # Bare-minimum LLM call — proves the Action can reach the model. No
+    # prompt/context/parsing yet; that's the rest of Step 4.
+    llm = get_llm()
+    response = llm.invoke("Reply with the single word OK.")
+    logger.info("LLM response: %s", response.content)
+    # Full review pipeline (context → prompt → findings → comment) lands
+    # here in the rest of Step 4.
     return 0
 
 

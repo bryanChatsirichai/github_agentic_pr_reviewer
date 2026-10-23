@@ -6,7 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "langchain>=1.4.7",
+    "langchain-anthropic>=1.7.6",
     "langchain-core>=1.7.0",
+    "langchain-google-genai>=4.4.2",
+    "langchain-openai>=1.7.2",
     "pydantic>=2.14.1",
     "pygithub>=2.10.0",
     "pytest>=9.1.1",

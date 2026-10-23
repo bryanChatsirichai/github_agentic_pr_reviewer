@@ -30,8 +30,10 @@ jobs:
       # `secrets.GITHUB_TOKEN` is provisioned automatically by Actions.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_REPOSITORY: ${{ github.repository }}
-      # TODO Step 4+: LLM access
-      # AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      # Step 4: LLM access — set MODEL_NAME as a repo variable to override
+      # the free-tier default (see docs/llm-providers.md).
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      MODEL_NAME: ${{ vars.MODEL_NAME }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
