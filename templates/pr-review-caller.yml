@@ -1,0 +1,69 @@
+# ============================================================================
+# Agentic PR Reviewer — CALLER WORKFLOW TEMPLATE
+# ============================================================================
+# Copy this file to <target-repo>/.github/workflows/pr-review.yml and
+# uncomment ONE of the `if:` security gates below if needed.
+#
+# Requirements (already met if you copied this as-is):
+#   - The reviewer repo bryanChatsirichai/github_agentic_pr_reviewer is
+#     PUBLIC (no PAT needed). If it ever goes private, the reusable
+#     workflow's checkout step must switch to a PAT passed by the caller.
+#   - Push this file to the target repo's DEFAULT branch (usually main) —
+#     pull_request workflows only fire from the default branch.
+#
+# What runs: PR events (opened / new commit / reopened) + manual dispatch,
+# mirroring the reviewer repo's own triggers. The reviewer code always runs
+# from the reviewer repo's `main`; to pin an older version, change @main to
+# a tag/commit sha below AND in the reusable workflow's checkout step.
+# ============================================================================
+
+name: pr-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+# One in-flight review per PR; newer cancels older.
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Permissions must be granted HERE (caller side) — a called workflow can
+    # never elevate beyond what the caller's job allows. These are the only
+    # permissions the reviewer needs: read code, write PR comments.
+    permissions:
+      contents: read
+      pull-requests: write
+
+    # A called workflow cannot read this repo's secrets unless they are
+    # passed explicitly. Create AI_API_KEY in this repo under
+    # Settings → Secrets and variables → Actions, then pass it through.
+    # (Alternative: `secrets: inherit` passes ALL repo secrets — simpler,
+    # but broader than needed.)
+    secrets:
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+
+    # --- Security gates (optional) ----------------------------------------
+    # Uncomment one, or combine with || / &&:
+    #
+    # 1. Same-repo branches only (blocks fork PRs entirely):
+    #    if: github.event.pull_request.head.repo.full_name == github.repository
+    #
+    # 2. Explicit author allowlist:
+    #    if: contains(fromJSON('["bryanChatsirichai"]'), github.actor)
+    #
+    # 2b. By relationship (owners/members/collaborators — no first-timers or
+    #     outside contributors):
+    #    if: |
+    #      github.event.pull_request.author_association == 'OWNER' ||
+    #      github.event.pull_request.author_association == 'MEMBER' ||
+    #      github.event.pull_request.author_association == 'COLLABORATOR'
+    #
+    # 3. Only review PRs targeting a protected branch:
+    #    if: github.base_ref == 'main'
+    # ------------------------------------------------------------------------
+
+    uses: bryanChatsirichai/github_agentic_pr_reviewer/.github/workflows/pr-review-reusable.yml@main
