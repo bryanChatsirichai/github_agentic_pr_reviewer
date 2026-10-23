@@ -30,7 +30,7 @@ General rules:
 - [x] Step 0 — General project setup
 - [x] Step 1 — GitHub Actions trigger
 - [x] Step 2 — GitHub client module
-- [ ] Step 3 — PR context builder
+- [x] Step 3 — PR context builder
 - [ ] Step 4 — First LLM review (no memory, no graph)
 - [ ] Step 5 — Re-review on every commit (still stateless)
 - [ ] Step 6 — Finding store (JSON memory)
@@ -127,7 +127,7 @@ Note: this module is **orchestrator plumbing, not agent tools**. The pipeline ca
 
 ---
 
-### [ ] Step 3 — PR context builder
+### [x] Step 3 — PR context builder
 
 **Goal:** Turn raw GitHub data into one context object every agent consumes.
 
