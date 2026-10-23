@@ -17,3 +17,5 @@ memory/
 
 # Graphify knowledge graph
 graphify-out/
+
+/logs

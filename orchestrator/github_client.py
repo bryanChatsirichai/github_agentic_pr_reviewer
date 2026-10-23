@@ -67,19 +67,15 @@ def _get_repo(client: Github | None = None) -> Repository:
 def verify_connection() -> str:
     """Sanity check: token works and the repo is reachable.
 
-    Returns the authenticated login (e.g. "bryan.chatsirichai" for a PAT,
-    "app" / "github-actions[bot]" style identity in CI), so callers can log
-    who they are acting as. Raises on bad/missing token or unreachable repo.
+    Returns the repo full name (e.g. "owner/repo"). Verified by fetching the
+    repo itself rather than GET /user, because the CI ``secrets.GITHUB_TOKEN``
+    is an installation token (github-actions[bot]) with no user identity —
+    GET /user returns 403 "Resource not accessible by integration" there.
+    Raises on bad/missing token or unreachable repo.
     """
-    client = _get_client()
-    user = client.get_user()
-    repo = _get_repo(client)
-    logger.info(
-        "GitHub connection OK — authenticated as %s, repo %s",
-        user.login,
-        repo.full_name,
-    )
-    return user.login
+    repo = _get_repo()
+    logger.info("GitHub connection OK — repo %s", repo.full_name)
+    return repo.full_name
 
 
 def get_pull_request(
