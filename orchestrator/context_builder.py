@@ -14,7 +14,7 @@ from github.Repository import Repository
 from clients import github
 from models.pr_context import ContextSummary, PRContext
 
-logger = logging.getLogger("pr-reviewer.pr_context")
+logger = logging.getLogger("pr-reviewer.context_builder")
 
 __all__ = ["build_context"]
 
