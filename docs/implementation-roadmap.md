@@ -75,7 +75,7 @@ tests/                 # empty pytest package (baseline)
 
 ---
 
-### [ ] Step 1 — GitHub Actions trigger
+### [x] Step 1 — GitHub Actions trigger
 
 **Goal:** A PR event (opened / new commit / reopened) boots the Python entry point in CI; a manual dispatch provides a no-commit test path.
 
@@ -98,7 +98,7 @@ tests/                 # empty pytest package (baseline)
 
 ## Phase B — Minimal end-to-end review (stateless)
 
-### [ ] Step 2 — GitHub client module
+### [x] Step 2 — GitHub client module
 
 **Goal:** All GitHub reads/writes the rest of the system needs, behind one module, testable offline.
 
