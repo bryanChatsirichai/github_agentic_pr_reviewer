@@ -30,7 +30,7 @@ General rules:
 - [x] Step 0 — General project setup
 - [x] Step 1 — GitHub Actions trigger
 - [x] Step 2 — GitHub client module
-- [ ] Step 3 — PR context builder
+- [x] Step 3 — PR context builder
 - [ ] Step 4 — First LLM review (no memory, no graph)
 - [ ] Step 5 — Re-review on every commit (still stateless)
 - [ ] Step 6 — Finding store (JSON memory)
@@ -107,7 +107,7 @@ tests/                 # empty pytest package (baseline)
 **Creates:**
 
 ```text
-orchestrator/github_client.py
+clients/github.py         # (originally orchestrator/github_client.py — moved in the Step 3 refactor)
 tests/test_github_client.py
 tests/fixtures/            # one real-shaped PR fixture JSON
 ```
@@ -127,7 +127,7 @@ Note: this module is **orchestrator plumbing, not agent tools**. The pipeline ca
 
 ---
 
-### [ ] Step 3 — PR context builder
+### [x] Step 3 — PR context builder
 
 **Goal:** Turn raw GitHub data into one context object every agent consumes.
 
@@ -136,9 +136,9 @@ Note: this module is **orchestrator plumbing, not agent tools**. The pipeline ca
 **Creates:**
 
 ```text
-orchestrator/context.py
+orchestrator/context_builder.py  # build_context — combines client data into PRContext
 models/pr_context.py       # PRContext: pr number, SHAs, diff, changed files, prev findings
-tests/test_context.py
+tests/test_context_builder.py
 ```
 
 **Tasks:**

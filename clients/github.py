@@ -7,7 +7,8 @@ repository are built lazily from the ``GITHUB_TOKEN`` / ``GITHUB_REPOSITORY``
 environment variables (GitHub CI sets both; locally GITHUB_TOKEN comes from
 ``.env``). This keeps the module testable offline: tests inject a mock
 client/repo and never touch the network. No globals are mutated at import
-time.
+time. Lives in ``clients/`` — the home for external-service clients
+(client for a second forge would join it here).
 """
 
 import logging

@@ -49,6 +49,6 @@ jobs:
         # PR events → github.event.* are set (real review).
         # Manual dispatch → both are empty → fallbacks give --pr 0 --event push.
         run: |
-          uv run python orchestrator/main.py \
+          uv run python -m orchestrator.main \
             --pr "${{ github.event.pull_request.number || 0 }}" \
             --event "${{ github.event.action || 'push' }}"
