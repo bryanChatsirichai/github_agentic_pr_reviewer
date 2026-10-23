@@ -617,7 +617,7 @@ A distinction that matters before reading the tool lists below:
 
 **PR data is fetched by the orchestrator, not by agents.** Before any
 agent runs, the pipeline (Steps 2–3) calls the GitHub client
-(`orchestrator/github_client.py`) and packs everything into a
+(`clients/github.py`) and packs everything into a
 `PRContext` object:
 
 ```text
@@ -640,7 +640,7 @@ Agents review what is already in front of them
 - Posting to GitHub is orchestrator-only, after the judge decides what gets
   reported. Agents never post directly — one hallucination would otherwise
   mean public spam on the PR.
-- The `repo` / `client` injection parameters on `github_client.py` functions
+- The `repo` / `client` injection parameters on `clients/github.py` functions
   exist so **tests** can mock them and run offline. They are not an agent
   interface.
 
@@ -703,7 +703,7 @@ depending on the repository.
 
 ## GitHub tools
 
-The GitHub client (`orchestrator/github_client.py`) is **orchestrator
+The GitHub client (`clients/github.py`) is **orchestrator
 plumbing, not an agent tool** — see "Orchestrator data vs. agent tools" above.
 For the prototype, agents get no GitHub API access at all: everything they
 need about the PR is already in `PRContext`.

@@ -1,8 +1,8 @@
 """PRContext — the single object every agent consumes.
 
-Step 3 of the implementation roadmap. ``orchestrator/context.py`` builds one
+Step 3 of the implementation roadmap. ``orchestrator/context_builder.py`` builds one
 of these per run by combining the raw GitHub data (Step 2's
-``github_client``) into a flat, agent-ready shape. Nothing here talks to
+``clients/github.py``) into a flat, agent-ready shape. Nothing here talks to
 GitHub directly — this module only defines the data.
 """
 
@@ -28,7 +28,7 @@ class ContextSummary(BaseModel):
 class PRContext(BaseModel):
     """Everything an agent needs to review one PR, in one object.
 
-    Built once per run by ``orchestrator.context.build_context``.
+    Built once per run by ``orchestrator.context_builder.build_context``.
     ``previous_findings`` is always empty until Step 6+ introduces memory —
     kept here now so the field never has to be bolted on later.
     """
@@ -41,12 +41,12 @@ class PRContext(BaseModel):
     head_branch: str
     base_sha: str
     head_sha: str
-    #: Unified diff for the whole PR (see ``github_client.get_pr_diff``).
+    #: Unified diff for the whole PR (see ``clients.github.get_pr_diff``).
     diff: str
-    #: Raw entries from ``github_client.get_pr_files`` (filename, status,
+    #: Raw entries from ``clients.github.get_pr_files`` (filename, status,
     #: additions, deletions, previous_filename, patch).
     changed_files: list[dict[str, Any]]
-    #: Prior comments from our bot (see ``github_client.MARKER``), oldest
+    #: Prior comments from our bot (see ``clients.github.MARKER``), oldest
     #: first, as returned by ``get_existing_review_comments``.
     existing_comments: list[dict[str, Any]]
     #: Memory doesn't exist until Step 6 — always empty for now.

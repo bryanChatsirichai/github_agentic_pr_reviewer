@@ -1,4 +1,4 @@
-"""Unit tests for orchestrator.github_client.
+"""Unit tests for clients.github.
 
 All GitHub objects are mocked (or hand-rolled fakes configured from the
 ``tests/fixtures/pr-42.json`` fixture) so no test ever touches the network.
@@ -14,8 +14,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import orchestrator.github_client as github_client
-from orchestrator.github_client import (
+import clients.github as github
+from clients.github import (
     MARKER,
     get_existing_review_comments,
     get_pr_diff,
@@ -73,7 +73,7 @@ def make_repo(pr) -> MagicMock:
 
 def test_verify_connection_returns_repo_full_name(monkeypatch) -> None:
     monkeypatch.setattr(
-        github_client, "_get_repo", lambda: SimpleNamespace(full_name="owner/repo")
+        github, "_get_repo", lambda: SimpleNamespace(full_name="owner/repo")
     )
     assert verify_connection() == "owner/repo"
 

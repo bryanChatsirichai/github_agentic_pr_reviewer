@@ -107,7 +107,7 @@ tests/                 # empty pytest package (baseline)
 **Creates:**
 
 ```text
-orchestrator/github_client.py
+clients/github.py         # (originally orchestrator/github_client.py — moved in the Step 3 refactor)
 tests/test_github_client.py
 tests/fixtures/            # one real-shaped PR fixture JSON
 ```
@@ -136,9 +136,9 @@ Note: this module is **orchestrator plumbing, not agent tools**. The pipeline ca
 **Creates:**
 
 ```text
-orchestrator/context.py
+orchestrator/context_builder.py  # build_context — combines client data into PRContext
 models/pr_context.py       # PRContext: pr number, SHAs, diff, changed files, prev findings
-tests/test_context.py
+tests/test_context_builder.py
 ```
 
 **Tasks:**

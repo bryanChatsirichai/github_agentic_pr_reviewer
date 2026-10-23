@@ -1,4 +1,4 @@
-"""Unit tests for orchestrator.context.build_context.
+"""Unit tests for orchestrator.context_builder.build_context.
 
 Uses the same fixture-backed fake PR as test_github_client.py (injected via
 the ``repo`` kwarg) so no test touches the network.
@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from orchestrator.context import build_context
+from orchestrator.context_builder import build_context
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "pr-42.json"
 

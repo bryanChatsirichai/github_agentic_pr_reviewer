@@ -1,7 +1,8 @@
 """Entry point for the agentic PR reviewer.
 
 Step 0 skeleton + Step 2 sanity check: parse --pr and --event, verify the
-GitHub token, exit cleanly. Later steps grow the review pipeline.
+GitHub token, exit cleanly. Later steps grow the review pipeline. Run as a
+module from the repo root: ``python -m orchestrator.main``.
 """
 
 import argparse
@@ -9,10 +10,7 @@ import logging
 
 from dotenv import load_dotenv
 
-try:  # imported as a package (tests, python -m orchestrator.main)
-    from .github_client import verify_connection
-except ImportError:  # run as a script: python orchestrator/main.py
-    from github_client import verify_connection
+from clients.github import verify_connection
 
 load_dotenv()
 

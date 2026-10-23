@@ -1,9 +1,9 @@
 """PR context builder — turns raw GitHub data into one ``PRContext``.
 
 Step 3 of the implementation roadmap. ``build_context`` is the single place
-that calls the Step 2 ``github_client`` functions and assembles their output
-into the object every later agent/graph step consumes. Like
-``github_client``, the GitHub client/repo can be injected for offline tests.
+that calls the Step 2 GitHub client (``clients/github.py``) and assembles its
+output into the object every later agent/graph step consumes. Like the
+client, the GitHub ``repo`` / ``client`` can be injected for offline tests.
 """
 
 import logging
@@ -11,14 +11,10 @@ import logging
 from github import Github
 from github.Repository import Repository
 
-try:  # imported as a package (tests, python -m orchestrator.context)
-    from . import github_client
-except ImportError:  # run as a script
-    import github_client
-
+from clients import github
 from models.pr_context import ContextSummary, PRContext
 
-logger = logging.getLogger("pr-reviewer.context")
+logger = logging.getLogger("pr-reviewer.pr_context")
 
 __all__ = ["build_context"]
 
@@ -29,16 +25,16 @@ def build_context(
     repo: Repository | None = None,
     client: Github | None = None,
 ) -> PRContext:
-    """Fetch PR #``pr_number`` via ``github_client`` and pack it into a ``PRContext``.
+    """Fetch PR #``pr_number`` via the GitHub client and pack it into a ``PRContext``.
 
     Combines PR metadata, the unified diff, changed files, and existing bot
     comments into one object. ``previous_findings`` stays empty — memory
     lands in Step 6.
     """
-    metadata = github_client.get_pull_request(pr_number, repo=repo, client=client)
-    changed_files = github_client.get_pr_files(pr_number, repo=repo, client=client)
-    diff = github_client.get_pr_diff(pr_number, repo=repo, client=client)
-    existing_comments = github_client.get_existing_review_comments(
+    metadata = github.get_pull_request(pr_number, repo=repo, client=client)
+    changed_files = github.get_pr_files(pr_number, repo=repo, client=client)
+    diff = github.get_pr_diff(pr_number, repo=repo, client=client)
+    existing_comments = github.get_existing_review_comments(
         pr_number, repo=repo, client=client
     )
 
