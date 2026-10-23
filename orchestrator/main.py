@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     # Bare-minimum LLM call — proves the Action can reach the model. No
     # prompt/context/parsing yet; that's the rest of Step 4.
     llm = get_llm()
-    response = llm.invoke("Reply with the single word OK.")
+    response = llm.invoke("What LLM Agent are you?")
     logger.info("LLM response: %s", response.content)
     # Full review pipeline (context → prompt → findings → comment) lands
     # here in the rest of Step 4.
