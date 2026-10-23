@@ -49,8 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logger.info("Starting review for PR #%s (event: %s)", args.pr, args.event)
     # Sanity check: fail fast if the token is missing/bad before doing work.
-    login = verify_connection()
-    logger.info("Token authenticated as: %s", login)
+    # Returns the repo full name — CI's secrets.GITHUB_TOKEN has no user login.
+    repo_full_name = verify_connection()
+    logger.info("GitHub token OK for repo: %s", repo_full_name)
     # Review pipeline lands here in later steps.
     return 0
 

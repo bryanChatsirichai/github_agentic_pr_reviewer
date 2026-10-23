@@ -1,4 +1,4 @@
-# Agentic PR Reviewer..
+# Agentic PR Reviewer...
 
 An agentic pull-request review system: GitHub PR events trigger LLM-driven reviewers with memory of previous findings, incremental diffs, and a critic/judge loop.
 
@@ -40,3 +40,21 @@ uv run python orchestrator/main.py --pr <PR_NUMBER> --event <EVENT>
 The workflow has **no `push` trigger** — commits to branches without an open PR trigger nothing. Manual testing uses the "Run workflow" button (or `gh workflow run pr-review.yml`), which runs the `push` code path with `--pr 0`. Rapid pushes to a PR branch cancel superseded in-flight runs via `concurrency`.
 
 Invalid values (e.g. `--pr abc`, a missing argument, or an unknown event) are rejected with a usage message and exit code 2. A successful run logs a startup line and exits 0.
+
+## Using the reviewer on other repositories
+
+The reviewer reads only `GITHUB_TOKEN` / `GITHUB_REPOSITORY` from the
+environment and talks to the GitHub API, so it can review any repo. To review
+PRs in another repo, copy the caller workflow template
+[`templates/pr-review-caller.yml`](templates/pr-review-caller.yml) into that
+repo as `.github/workflows/pr-review.yml` (push to the default branch). The
+template ships with commented-out security gates — fork blocking, author
+allowlists, target-branch restrictions — uncomment the ones you want:
+
+Notes:
+- This repo must stay **public** for the checkout in `pr-review-reusable.yml`
+  to work without a PAT; a private move requires passing a PAT instead.
+- `pull_request` workflows only fire from a repo's **default branch** — push the
+  caller file to `main` first, then open a PR to see it run.
+- The reviewer code always runs from this repo's `main` (see the reusable
+  workflow's checkout `ref`). Pin to a tag to control upgrade timing.

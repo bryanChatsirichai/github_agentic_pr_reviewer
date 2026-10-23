@@ -1,0 +1,77 @@
+# ============================================================================
+# Agentic PR Reviewer — reusable workflow
+# ============================================================================
+# Lets OTHER repositories run this reviewer on their PRs. A caller repo adds
+# a workflow like (see templates/pr-review-caller.yml for a full example):
+#
+#   on:
+#     pull_request:
+#       types: [opened, synchronize, reopened]
+#   jobs:
+#     review:
+#       uses: bryanChatsirichai/github_agentic_pr_reviewer/.github/workflows/pr-review-reusable.yml@main
+#       secrets:
+#         AI_API_KEY: ${{ secrets.AI_API_KEY }}
+#
+# Key semantics of a *called* workflow:
+#   - github.repository → the CALLING repo (e.g. repo-A), not this repo.
+#   - github.event      → the event that triggered the CALLER (its PR).
+#   - github.token       → GITHUB_TOKEN scoped to the CALLING repo, so posting
+#     PR comments in repo-A works with the permissions the caller grants.
+#
+# The reviewer reads only GITHUB_TOKEN / GITHUB_REPOSITORY env vars and talks
+# to the GitHub API, so it reviews whatever repo the caller points it at.
+# ============================================================================
+
+name: pr-review (reusable)
+
+on:
+  workflow_call:
+    # Secrets the caller passes in. A called workflow cannot reach the
+    # caller repo's secrets unless they are explicitly passed.
+    secrets:
+      AI_API_KEY:
+        description: LLM API key for the reviewer agent (used from Step 4+)
+        required: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # Grants for github.token — applies to the CALLING repo's PRs.
+    permissions:
+      contents: read          # read the repo
+      pull-requests: write    # post review comments
+
+    steps:
+      # In a called workflow, the default checkout would fetch the CALLER's
+      # repo (where orchestrator/ does not exist), so pin to this repo. It is
+      # public, so the caller's default token is enough. shortcut: if this
+      # repo goes private, the caller must pass a PAT for this checkout.
+      - name: Check out reviewer code
+        uses: actions/checkout@v4
+        with:
+          repository: bryanChatsirichai/github_agentic_pr_reviewer
+          ref: main
+
+      - name: Install uv and set up Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Run PR reviewer
+        # github.event.* come from the CALLER's trigger:
+        #   PR events → pull_request.number / action are set (real review)
+        #   Manual dispatch → both empty → fallbacks give --pr 0 --event push
+        run: |
+          uv run python orchestrator/main.py \
+            --pr "${{ github.event.pull_request.number || 0 }}" \
+            --event "${{ github.event.action || 'push' }}"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # Passed by the caller from ITS repo secrets; empty until created.
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
