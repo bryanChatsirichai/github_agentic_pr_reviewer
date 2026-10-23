@@ -10,3 +10,8 @@ dependencies = [
     "pytest>=9.1.1",
     "python-dotenv>=1.2.4",
 ]
+
+[tool.pytest.ini_options]
+# No __init__.py anywhere — packages are PEP 420 namespace packages. pytest's
+# rootdir-relative import then can't see them, so put the repo root on sys.path.
+pythonpath = ["."]
