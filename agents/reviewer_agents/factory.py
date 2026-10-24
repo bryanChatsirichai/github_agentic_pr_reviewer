@@ -6,6 +6,7 @@
 the prompt with a "previous findings" section).
 """
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,7 +14,11 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agents.llm import get_llm
+from agents.reviewer_agents.parser import FindingParseError, parse_findings
+from models.finding import Finding
 from models.pr_context import PRContext
+
+logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -39,6 +44,37 @@ class Reviewer:
                 HumanMessage(render_pr_context(context)),
             ]
         )
+
+    def review_findings(self, context: PRContext) -> list[Finding]:
+        """Review a PR and return parsed, validated findings.
+
+        On malformed output, retries once with the parse error fed back to
+        the model (roadmap Step 4 task 4); a second failure raises
+        ``FindingParseError`` — currently a fatal review error, reported to
+        the user as a failed run.
+        """
+        reply = self.review_pr(context)
+        try:
+            return parse_findings(reply.content)
+        except FindingParseError as exc:
+            logger.warning(
+                "Reviewer %s produced unparseable output (%s) — retrying once",
+                self.name,
+                exc,
+            )
+            retry_reply = self.llm.invoke(
+                [
+                    SystemMessage(self.system_prompt),
+                    HumanMessage(render_pr_context(context)),
+                    reply,
+                    HumanMessage(
+                        f"Your reply could not be parsed as a JSON array of "
+                        f"findings: {exc}. Respond again with ONLY the JSON "
+                        f"array, no prose and no code fences."
+                    ),
+                ]
+            )
+            return parse_findings(retry_reply.content)
 
 
 def build_reviewer(name: str) -> Reviewer:
