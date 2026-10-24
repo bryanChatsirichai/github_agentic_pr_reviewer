@@ -1,9 +1,8 @@
 """Reviewer factory — binds a prompt file to a chat model.
 
 ``build_reviewer(name)`` turns a prompt file in
-``agents/reviewer_agents/prompts/`` into a runnable reviewer. No tools yet
-(Step 11 adds them); no conversation history either (Step 7 instead grows
-the prompt with a "previous findings" section).
+``agents/reviewer_agents/prompts/`` into a runnable reviewer. No tools
+and no conversation history yet — the prompt stays a single turn.
 """
 
 import logging
@@ -28,9 +27,8 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 class Reviewer:
     """A reviewer agent: one system prompt bound to one chat model.
 
-    ``name`` is the prompt file's stem (e.g. ``"logic-reviewer"``); once
-    Step 14 adds more reviewers, it also becomes each finding's
-    ``source_reviewer`` tag.
+    ``name`` is the prompt file's stem (e.g. ``"logic-reviewer"``); with
+    multiple reviewers it becomes each finding's ``source_reviewer`` tag.
     """
 
     name: str
@@ -115,8 +113,8 @@ def render_pr_context(context: PRContext) -> str:
     """Render a PRContext into the reviewer's user message.
 
     Plain text on purpose: the only JSON in the exchange is the findings
-    array the model must reply with, so parsing (Task 4) never has to
-    distinguish output JSON from prompt text.
+    object the model must reply with, so parsing never has to distinguish
+    output JSON from prompt text.
     """
     lines = [
         f"# PR #{context.pr_number}: {context.title}",

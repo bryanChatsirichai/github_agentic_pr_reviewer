@@ -28,8 +28,8 @@ def build_context(
     """Fetch PR #``pr_number`` via the GitHub client and pack it into a ``PRContext``.
 
     Combines PR metadata, the unified diff, changed files, and existing bot
-    comments into one object. ``previous_findings`` stays empty — memory
-    isn't implemented yet.
+    comments into one object. ``previous_findings`` stays empty until
+    memory exists.
     """
     metadata = github.get_pull_request(pr_number, repo=repo, client=client)
     changed_files = github.get_pr_files(pr_number, repo=repo, client=client)
@@ -91,9 +91,8 @@ def _truncated(text: str) -> str:
 def _debug_preview(context: PRContext) -> str:
     """Human-readable, truncated dump of a PRContext for DEBUG logging.
 
-    Shows structure (metadata, file list, body, diff head) — never the
-    full payload, which can be tens of thousands of chars and would bury
-    the log lines around it.
+    Shows structure (metadata, file list, body, diff head) — never the full
+    payload, which would bury the log lines around it.
     """
     return "\n".join(
         [

@@ -1,8 +1,8 @@
 """Entry point for the agentic PR reviewer.
 
-Wires the Step 4 pipeline end-to-end: build PR context → run the logic
-reviewer → render findings into a ``🤖 AI Review`` comment → post it.
-Run as a module from the repo root: ``python -m orchestrator.main``.
+Pipeline: build PR context → run the logic reviewer → render findings into
+a ``🤖 AI Review`` comment → post it. Run as a module from the repo root:
+``python -m orchestrator.main``.
 """
 
 import argparse
@@ -59,13 +59,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def render_comment(context: PRContext, result: ReviewResult) -> str:
     """Render the review verdict into the body of a ``🤖 AI Review`` comment.
 
-    Metadata (branch, commit, files checked) comes straight from the
-    PRContext, not the agent — those are known facts and must not be
-    restated by a model that could misremember them. The overall rating
-    is the agent's judgment. The MARKER line is prepended by
-    ``post_review_comment``. Step 7 splits this into "Previous findings"
-    / "New findings" sections once memory exists; until then one flat
-    list is the whole story.
+    Metadata (branch, commit, files) comes from the PRContext, not the
+    agent — known facts must not be restated by a model that could
+    misremember them. The overall rating is the agent's judgment. The
+    MARKER line is prepended by ``post_review_comment``.
     """
     files = context.summary.file_list
     lines = [

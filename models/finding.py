@@ -16,12 +16,11 @@ from pydantic import BaseModel, Field
 
 
 class FindingStatus(StrEnum):
-    """Lifecycle states from design section 20.
+    """Finding lifecycle (design section 20).
 
-    ``new`` is transient: a freshly-created finding starts there before the
-    orchestrator files it into memory as ``open``. Allowed transitions
-    (e.g. ``resolved -> reopened`` on regression) are enforced in
-    ``orchestrator/memory.py`` (Step 6), not here.
+    ``new`` is transient — it becomes ``open`` once the orchestrator files
+    the finding into memory. Transitions (e.g. ``resolved -> reopened`` on
+    regression) are enforced in ``orchestrator/memory.py``, not here.
     """
 
     NEW = "new"
@@ -46,20 +45,18 @@ class Finding(BaseModel):
     """One issue reported by a reviewer agent for a specific file/line.
 
     ``severity`` (how bad if real) and ``confidence`` (how sure the reviewer
-    is that it is real, design section 23) are independent axes - keep them separate
-    when judging or filtering.
+    is) are independent axes — keep them separate when judging or filtering.
     """
 
     id: str = Field(
         description=(
             "Stable identifier (``F001``, ``F002``, ...) that survives across "
             "commits so re-reviews refer back to the same finding instead of "
-            "re-reporting it. Assigned by ``orchestrator/memory.py`` (Step 6), "
-            "not by the reviewer itself."
+            "re-reporting it. Assigned by the orchestrator, not the reviewer."
         )
     )
     status: FindingStatus = Field(
-        description="Lifecycle state (design section 20); starts as ``new`` for fresh findings."
+        description="Lifecycle state; starts as ``new`` for fresh findings."
     )
     severity: Severity = Field(
         description="How bad the issue is: low | medium | high | critical."
@@ -75,9 +72,5 @@ class Finding(BaseModel):
     confidence: float = Field(
         ge=0.0,
         le=1.0,
-        description=(
-            "Reviewer's certainty that this is a real issue, in [0.0, 1.0] "
-            "(design section 23). Posting vs. silently recording thresholds arrive "
-            "in Step 13."
-        ),
+        description="Reviewer's certainty that this is a real issue, in [0.0, 1.0].",
     )

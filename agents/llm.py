@@ -7,7 +7,7 @@ from langchain_core.language_models import BaseChatModel
 
 #: Per-provider env wiring. MODEL_PROVIDER picks the entry; prefix is the
 #: langchain provider id for init_chat_model's "provider:model" string.
-#: Defaults come from docs/llm-providers.md.
+#: Defaults per docs/llm-providers.md.
 PROVIDERS: dict[str, dict[str, str]] = {
     "google": {
         "prefix": "google_genai",
@@ -36,11 +36,9 @@ def resolve_model() -> tuple[str, str]:
     """Validate ``MODEL_PROVIDER`` and return ``(provider, model)``.
 
     ``MODEL_PROVIDER`` (required, case-insensitive) picks the provider:
-    ``google`` | ``openai`` | ``claude``. ``<PROVIDER>_MODEL``
-    (``GOOGLE_MODEL`` / ``OPENAI_MODEL`` / ``CLAUDE_MODEL``) overrides the
-    provider's default model. Raises RuntimeError (missing or unknown
-    provider) so failures surface immediately; orchestrator.main logs it
-    and exits 1.
+    ``google`` | ``openai`` | ``claude``. ``<PROVIDER>_MODEL`` overrides
+    the provider's default. Raises RuntimeError on missing/unknown
+    provider so config errors surface at startup, not mid-review.
     """
     provider = os.environ.get("MODEL_PROVIDER", "").strip()
     if not provider:
@@ -65,8 +63,7 @@ def get_llm() -> BaseChatModel:
 
     See ``resolve_model`` for provider/model selection. The matching
     ``<PROVIDER>_API_KEY`` env var is required; raises RuntimeError when
-    missing so failures surface immediately; orchestrator.main logs it
-    and exits 1.
+    missing.
     """
     provider, model = resolve_model()
     spec = PROVIDERS[provider]

@@ -1,9 +1,8 @@
-"""ReviewResult — one reviewer agent's full verdict for one PR.
+"""ReviewResult — one reviewer agent's verdict for one PR.
 
-Pairs the findings with the overall rating the agent was asked for (see
-``agents/reviewer_agents/prompts/logic-reviewer.md``). Ratings mirror the
-GitHub review states so a later step can post a real GitHub review
-instead of just a comment if we want that.
+Pairs the findings with the overall rating. Ratings mirror the GitHub
+review states (approve / comment / request_changes) so a later step can
+post a real GitHub review instead of a plain comment.
 """
 
 from dataclasses import dataclass, field
@@ -16,7 +15,6 @@ RATINGS = ("approve", "comment", "request_changes")
 #: Ratings implied by the finding mix when the model returned a bare
 #: findings array without the rating field.
 _BLOCKING_SEVERITIES = (Severity.HIGH, Severity.CRITICAL)
-
 
 @dataclass(frozen=True)
 class ReviewResult:
