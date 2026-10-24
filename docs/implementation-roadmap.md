@@ -59,7 +59,7 @@ General rules:
 pyproject.toml          # uv-managed project: pydantic, python-dotenv, pytest
 uv.lock
 .gitignore             # .env, __pycache__/, .venv/, memory state
-.env.example           # GITHUB_TOKEN, AI_API_KEY, MODEL_NAME placeholders
+.env.example           # GITHUB_TOKEN, MODEL_PROVIDER + per-provider key/model placeholders
 README.md              # quickstart + link to docs/
 orchestrator/main.py   # parses --pr / --event, logs a startup line, exits 0
 tests/                 # empty pytest package (baseline)
@@ -71,7 +71,7 @@ tests/                 # empty pytest package (baseline)
 3. Empty pytest package so `pytest` runs green with zero tests.
 4. Keep dependencies minimal — `uv add` a package only at the step that needs it.
 
-**Done when:** `uv sync && uv run python orchestrator/main.py --pr 123 --event opened` prints a startup line and exits 0, and `uv run pytest` passes with no tests.
+**Done when:** `uv sync && uv run python -m orchestrator.main --pr 123 --event opened` prints a startup line and exits 0, and `uv run pytest` passes with no tests.
 
 ---
 
@@ -89,7 +89,7 @@ tests/                 # empty pytest package (baseline)
 
 **Tasks:**
 1. Workflow: `on: pull_request: [opened, synchronize, reopened]` (real review path — pushes to branches without an open PR trigger nothing) + `workflow_dispatch` (manual testing) + a `concurrency` group per PR that cancels superseded in-flight runs.
-2. Job: checkout → setup Python 3.12 (or use `astral-sh/setup-uv`, which handles both) → `uv sync` → `uv run python orchestrator/main.py`, with PR number and event name passed via env.
+2. Job: checkout → setup Python 3.12 (or use `astral-sh/setup-uv`, which handles both) → `uv sync` → `uv run python -m orchestrator.main`, with PR number and event name passed via env.
 3. Provide `GITHUB_TOKEN` / `AI_API_KEY` from secrets (unused for now, wired for later steps).
 
 **Done when:** Open a draft PR against this repo and push a commit to it (review runs, correct PR number and event type in logs); trigger a manual dispatch run (test path, `--pr 0`); both go green.

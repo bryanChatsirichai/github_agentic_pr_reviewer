@@ -30,8 +30,15 @@ jobs:
       # `secrets.GITHUB_TOKEN` is provisioned automatically by Actions.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_REPOSITORY: ${{ github.repository }}
-      # Step 4: LLM access — set MODEL_NAME as a repo variable to override
-      # the free-tier default (see docs/llm-providers.md).
+      # Step 4: LLM access — MODEL_PROVIDER (google | openai | claude) as a
+      # repo *variable* is the one value to flip when switching providers;
+      # the matching key secret is then picked automatically
+      # (see docs/llm-providers.md).
+      MODEL_PROVIDER: ${{ vars.MODEL_PROVIDER }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Legacy pair — used only when MODEL_PROVIDER is unset.
       AI_API_KEY: ${{ secrets.AI_API_KEY }}
       MODEL_NAME: ${{ vars.MODEL_NAME }}
     steps:

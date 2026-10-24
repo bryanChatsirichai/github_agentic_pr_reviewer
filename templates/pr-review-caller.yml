@@ -39,12 +39,15 @@ jobs:
       pull-requests: write
 
     # A called workflow cannot read this repo's secrets unless they are
-    # passed explicitly. Create AI_API_KEY in this repo under
-    # Settings → Secrets and variables → Actions, then pass it through.
+    # passed explicitly. Create the keys you use in this repo under
+    # Settings → Secrets and variables → Actions (only the one matching
+    # model_provider needs a value), then pass them through.
     # (Alternative: `secrets: inherit` passes ALL repo secrets — simpler,
     # but broader than needed.)
     secrets:
-      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
     # --- Security gates (optional) ----------------------------------------
     # Uncomment one, or combine with || / &&:
@@ -67,3 +70,7 @@ jobs:
     # ------------------------------------------------------------------------
 
     uses: bryanChatsirichai/github_agentic_pr_reviewer/.github/workflows/pr-review-reusable.yml@main
+    # Switching providers = change this one value (google | openai | claude);
+    # the matching key secret is picked up from the secrets block above.
+    with:
+      model_provider: google

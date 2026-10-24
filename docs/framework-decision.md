@@ -13,7 +13,7 @@ The agentic layer (Phase 6 of the roadmap) needs to express a very specific shap
 1. **Deterministic, explicit control flow** — a fixed pipeline: load memory → compute incremental diff → run 3–4 specialized reviewers (parallel) → critic with a *conditional loop back* (re-investigate if evidence is insufficient, bounded by `MAX_REVIEW_ITERATIONS`) → judge → update memory → post GitHub review.
 2. **Persistent structured state between runs** — previous findings, finding lifecycle (open/resolved/rejected/reopened), reviewed SHA — stored as JSON/SQLite and passed in/out of the workflow as a typed object.
 3. **Orchestrator control, not agent autonomy** — agents never decide what happens next; the graph does. Agents receive pre-fetched context (`PRContext`) and may optionally call read-only investigation tools.
-4. **LLM-agnostic** — Claude / GPT / Gemini via `AI_API_KEY` / `MODEL_NAME` env config.
+4. **LLM-agnostic** — Claude / GPT / Gemini via `MODEL_PROVIDER` + per-provider key/model env config (legacy `AI_API_KEY` / `MODEL_NAME` pair still honored).
 5. **Bounded loops, auditability, offline unit testing** with mocked LLM calls.
 
 Three candidates were evaluated (versions as of October 2026): LangGraph 1.2.16, CrewAI 1.15.28, and plain LangChain 1.4.6.

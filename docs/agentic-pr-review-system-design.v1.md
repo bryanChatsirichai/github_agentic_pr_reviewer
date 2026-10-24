@@ -191,7 +191,7 @@ GitHub PR opened / new commit
             ↓
      setup Python
             ↓
-   python orchestrator/main.py
+   python -m orchestrator.main
             ↓
         LangGraph
             ↓
@@ -230,7 +230,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run PR agent
-        run: python orchestrator/main.py
+        run: python -m orchestrator.main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
