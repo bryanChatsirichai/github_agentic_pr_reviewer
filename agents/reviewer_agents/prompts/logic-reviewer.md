@@ -23,25 +23,35 @@ or test coverage (other reviewers own those, once they exist).
 
 ## Output format
 
-Respond with ONLY a JSON array of findings — no prose, no markdown code
-fences. Each element must have exactly these fields:
+Respond with ONLY a JSON object — no prose, no markdown code fences —
+with exactly these top-level fields:
 
 ```json
 {
-  "id": "F001",
-  "status": "new",
-  "severity": "medium",
-  "file": "src/JobService.java",
-  "line": 82,
-  "title": "Page size is not validated",
-  "description": "pageSize is read from the request without an upper bound, so a caller can request unbounded result sets. Clamp it before querying.",
-  "confidence": 0.87
+  "overall_rating": "approve",
+  "findings": [
+    {
+      "id": "F001",
+      "status": "new",
+      "severity": "medium",
+      "file": "src/JobService.java",
+      "line": 82,
+      "title": "Page size is not validated",
+      "description": "pageSize is read from the request without an upper bound, so a caller can request unbounded result sets. Clamp it before querying.",
+      "confidence": 0.87
+    }
+  ]
 }
 ```
 
+- `overall_rating`: your verdict for the PR as a whole, one of
+  `"approve"` (nothing blocking), `"comment"` (worth noting, not
+  blocking), or `"request_changes"` (real problems that should be fixed
+  before merge). Judge from the findings, not just their count.
+- `findings`: the array of issues you can point to a file and line for.
 - `id`: sequence findings `"F001"`, `"F002"`, ... in the order you report them.
 - `status`: always `"new"` — the review system owns the finding lifecycle.
 - `severity`: `"low"` | `"medium"` | `"high"` | `"critical"`.
 - `line`: 1-based line number in the new version of the file.
 - `confidence`: your certainty the issue is real, `0.0` to `1.0`.
-- No issues found → `[]`.
+- No issues found → `"findings": []` and `"overall_rating": "approve"`.

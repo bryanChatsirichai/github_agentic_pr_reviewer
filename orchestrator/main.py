@@ -15,7 +15,8 @@ from agents.llm import resolve_model
 from agents.reviewer_agents.factory import build_reviewer
 from agents.reviewer_agents.parser import FindingParseError
 from clients.github import post_review_comment, verify_connection
-from models.finding import Finding
+from models.pr_context import PRContext
+from models.review import ReviewResult
 from orchestrator.context_builder import build_context
 
 load_dotenv()
@@ -55,16 +56,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def render_comment(findings: list[Finding]) -> str:
-    """Render findings into the body of a ``🤖 AI Review`` comment.
+def render_comment(context: PRContext, result: ReviewResult) -> str:
+    """Render the review verdict into the body of a ``🤖 AI Review`` comment.
 
-    The MARKER line is prepended by ``post_review_comment``. Step 7 splits
-    this into "Previous findings" / "New findings" sections once memory
-    exists; until then one flat list is the whole story.
+    Metadata (branch, commit, files checked) comes straight from the
+    PRContext, not the agent — those are known facts and must not be
+    restated by a model that could misremember them. The overall rating
+    is the agent's judgment. The MARKER line is prepended by
+    ``post_review_comment``. Step 7 splits this into "Previous findings"
+    / "New findings" sections once memory exists; until then one flat
+    list is the whole story.
     """
+    files = context.summary.file_list
+    lines = [
+        "## Review Findings",
+        "",
+        f"**Overall: {result.overall_rating}** · "
+        f"branch `{context.head_branch}` @ `{context.head_sha[:10]}` · "
+        f"{len(files)} file(s) checked",
+        "",
+        _files_section(files),
+        "",
+    ]
+    findings = result.findings
     if not findings:
-        return "## Review Findings\n\nNo issues found. 🎉"
-    lines = ["## Review Findings", "", f"Found {len(findings)} issue(s):", ""]
+        lines += ["No issues found. 🎉"]
+        return "\n".join(lines).rstrip()
+    lines += [f"Found {len(findings)} issue(s):", ""]
     for f in findings:
         lines += [
             f"### {f.id} — {f.title}",
@@ -77,20 +95,32 @@ def render_comment(findings: list[Finding]) -> str:
     return "\n".join(lines).rstrip()
 
 
-def run_review(pr_number: int) -> list[Finding]:
+def _files_section(files: list[str], inline_limit: int = 10) -> str:
+    """List the checked files, collapsed once the list gets long."""
+    if len(files) <= inline_limit:
+        return "Files checked: " + (", ".join(files) if files else "(none)")
+    listed = "\n".join(f"- {name}" for name in files)
+    return f"<details>\n<summary>Files checked ({len(files)})</summary>\n\n{listed}\n\n</details>"
+
+
+def run_review(pr_number: int) -> ReviewResult:
     """Full review pass for one PR: context → reviewer → comment on GitHub."""
     # Config errors (missing provider/key) raise RuntimeError here, before
     # any GitHub write — fail fast rather than half way through a review.
     provider, model = resolve_model()
     logger.info("Using LLM provider=%s model=%s", provider, model)
-    
+
     context = build_context(pr_number)
     reviewer = build_reviewer("logic-reviewer")
-    findings = reviewer.review_findings(context)
-    logger.info("Reviewer returned %d finding(s)", len(findings))
+    result = reviewer.review(context)
+    logger.info(
+        "Reviewer returned %d finding(s), rating=%s",
+        len(result.findings),
+        result.overall_rating,
+    )
 
-    post_review_comment(pr_number, render_comment(findings))
-    return findings
+    post_review_comment(pr_number, render_comment(context, result))
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
