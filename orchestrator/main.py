@@ -53,8 +53,14 @@ def main(argv: list[str] | None = None) -> int:
     repo_full_name = verify_connection()
     logger.info("GitHub token OK for repo: %s", repo_full_name)
     # Bare-minimum LLM call — proves the Action can reach the model. No
-    # prompt/context/parsing yet; that's the rest of Step 4.
-    llm = get_llm()
+    # prompt/context/parsing yet; that's the rest of Step 4. Config errors
+    # (missing provider/key) are logged and exit 1 — the GitHub Action then
+    # fails on that same message.
+    try:
+        llm = get_llm()
+    except RuntimeError as exc:
+        logger.error("LLM config error: %s", exc)
+        return 1
     response = llm.invoke("What LLM Agent are you?")
     logger.info("LLM response: %s", response.content)
     # Full review pipeline (context → prompt → findings → comment) lands

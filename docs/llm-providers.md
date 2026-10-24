@@ -33,12 +33,13 @@ change, locally and in CI. `MODEL_PROVIDER` selects one of:
 |---|---|---|---|
 | `google` | `GOOGLE_API_KEY` | `GOOGLE_MODEL` | `gemini-3.5-flash-lite` |
 | `openai` | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-5.6-luna` |
-| `claude` (`anthropic` alias) | `ANTHROPIC_API_KEY` | `CLAUDE_MODEL` | `claude-haiku-4.5` |
+| `claude` | `ANTHROPIC_API_KEY` | `CLAUDE_MODEL` | `claude-haiku-4.5` |
 
-Keep all three keys configured (in `.env` locally, as repo *secrets* in CI) and
+`MODEL_PROVIDER` is **required** (case-insensitive, no aliases): if it is unset
+or unknown, the run logs the error and exits 1 — locally and in CI alike. Keep
+all three keys configured (in `.env` locally, as repo *secrets* in CI) and
 flipping `MODEL_PROVIDER` (a repo *variable* in CI, or a `model_provider` input
-for caller repos) is the only change needed. The legacy `AI_API_KEY` +
-`MODEL_NAME` ("provider:model") pair still works when `MODEL_PROVIDER` is unset.
+for caller repos) is the only change needed.
 
 ## Cost reference
 

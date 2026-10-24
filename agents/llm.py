@@ -35,63 +35,41 @@ PROVIDERS: dict[str, dict[str, str]] = {
     },
 }
 
-#: Alternate spellings accepted for MODEL_PROVIDER (case-insensitive anyway).
-ALIASES = {
-    "anthropic": "claude",
-    "google_genai": "google",
-    "gemini": "google",
-    "open_ai": "openai",
-}
-
 __all__ = ["get_llm"]
 
 
 def get_llm() -> BaseChatModel:
     """Build the reviewer's chat model from env config.
 
-    ``MODEL_PROVIDER`` picks the provider: ``google`` | ``openai`` |
-    ``claude`` (``anthropic`` accepted as an alias). The matching
-    ``<PROVIDER>_API_KEY`` env var is required; ``<PROVIDER>_MODEL``
-    (``GOOGLE_MODEL`` / ``OPENAI_MODEL`` / ``CLAUDE_MODEL``) overrides the
-    provider's default model. Switching providers means changing one value —
-    keep all three keys configured and flip ``MODEL_PROVIDER``.
+    ``MODEL_PROVIDER`` (required, case-insensitive) picks the provider:
+    ``google`` | ``openai`` | ``claude``. The matching ``<PROVIDER>_API_KEY``
+    env var is required; ``<PROVIDER>_MODEL`` (``GOOGLE_MODEL`` /
+    ``OPENAI_MODEL`` / ``CLAUDE_MODEL``) overrides the provider's default
+    model. Switching providers means changing one value — keep all three
+    keys configured and flip ``MODEL_PROVIDER``.
 
-    Legacy fallback (pre-provider config): when ``MODEL_PROVIDER`` is unset,
-    ``MODEL_NAME`` ("provider:model" string) + ``AI_API_KEY`` are used, so
-    existing CI secrets keep working.
-
-    Raises if the required key is missing so failures surface immediately
-    instead of inside the LLM call.
+    Raises RuntimeError (missing provider, unknown provider, or missing key)
+    so failures surface immediately; orchestrator.main logs it and exits 1.
     """
-    provider_raw = os.environ.get("MODEL_PROVIDER", "").strip().lower()
-    if provider_raw:
-        provider = ALIASES.get(provider_raw, provider_raw)
-        if provider not in PROVIDERS:
-            valid = ", ".join(sorted(PROVIDERS))
-            raise RuntimeError(
-                f"MODEL_PROVIDER={provider_raw!r} is not a known provider — "
-                f"expected one of: {valid} (aliases: anthropic→claude)"
-            )
-        spec = PROVIDERS[provider]
-        api_key = os.environ.get(spec["key_env"])
-        if not api_key:
-            raise RuntimeError(
-                f"{spec['key_env']} is not set — add it to .env or the CI "
-                f"secret (selected via MODEL_PROVIDER={provider_raw})"
-            )
-        model = os.environ.get(spec["model_env"]) or spec["default_model"]
-        return init_chat_model(f"{spec['prefix']}:{model}", api_key=api_key)
-
-    # Legacy: MODEL_NAME + AI_API_KEY (see git history / older CI setups).
-    api_key = os.environ.get("AI_API_KEY")
+    provider = os.environ.get("MODEL_PROVIDER", "").strip()
+    if not provider:
+        raise RuntimeError(
+            "MODEL_PROVIDER is not set — set it in .env (local) or as the "
+            "repo variable / model_provider input (CI). Valid values: "
+            + ", ".join(sorted(PROVIDERS))
+        )
+    provider = provider.lower()
+    if provider not in PROVIDERS:
+        raise RuntimeError(
+            f"MODEL_PROVIDER={provider!r} is not a known provider — "
+            f"expected one of: {', '.join(sorted(PROVIDERS))}"
+        )
+    spec = PROVIDERS[provider]
+    api_key = os.environ.get(spec["key_env"])
     if not api_key:
         raise RuntimeError(
-            "No LLM key found — set MODEL_PROVIDER plus the matching "
-            "<PROVIDER>_API_KEY (e.g. GOOGLE_API_KEY), or the legacy "
-            "AI_API_KEY pair. Add it to .env or the CI secret"
+            f"{spec['key_env']} is not set — add it to .env or the CI "
+            f"secret (selected via MODEL_PROVIDER={provider})"
         )
-    google_spec = PROVIDERS["google"]
-    model = os.environ.get("MODEL_NAME") or (
-        f"{google_spec['prefix']}:{google_spec['default_model']}"
-    )
-    return init_chat_model(model, api_key=api_key)
+    model = os.environ.get(spec["model_env"]) or spec["default_model"]
+    return init_chat_model(f"{spec['prefix']}:{model}", api_key=api_key)

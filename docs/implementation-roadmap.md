@@ -90,7 +90,7 @@ tests/                 # empty pytest package (baseline)
 **Tasks:**
 1. Workflow: `on: pull_request: [opened, synchronize, reopened]` (real review path — pushes to branches without an open PR trigger nothing) + `workflow_dispatch` (manual testing) + a `concurrency` group per PR that cancels superseded in-flight runs.
 2. Job: checkout → setup Python 3.12 (or use `astral-sh/setup-uv`, which handles both) → `uv sync` → `uv run python -m orchestrator.main`, with PR number and event name passed via env.
-3. Provide `GITHUB_TOKEN` / `AI_API_KEY` from secrets (unused for now, wired for later steps).
+3. Provide `GITHUB_TOKEN` / the provider API key (`GOOGLE_API_KEY` etc.) from secrets (unused for now, wired for later steps).
 
 **Done when:** Open a draft PR against this repo and push a commit to it (review runs, correct PR number and event type in logs); trigger a manual dispatch run (test path, `--pr 0`); both go green.
 

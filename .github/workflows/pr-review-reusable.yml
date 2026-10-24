@@ -32,8 +32,8 @@ name: pr-review (reusable)
 on:
   workflow_call:
     # Which provider the reviewer uses: google | openai | claude (see
-    # agents/llm.py). Optional — when empty, the reviewer falls back to the
-    # legacy AI_API_KEY + MODEL_NAME env pair.
+    # agents/llm.py). Required at runtime — if empty, the reviewer logs an
+    # error and exits 1.
     inputs:
       model_provider:
         description: "google | openai | claude — selects the API key + model"
@@ -52,10 +52,6 @@ on:
         required: false
       ANTHROPIC_API_KEY:
         description: Anthropic (Claude) API key — used when model_provider=claude
-        required: false
-      # Legacy single-key scheme, still honored when model_provider is empty.
-      AI_API_KEY:
-        description: Legacy LLM key (pair with MODEL_NAME env) — prefer model_provider
         required: false
 
 jobs:
@@ -103,5 +99,3 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Legacy pair — used only when model_provider is empty.
-          AI_API_KEY: ${{ secrets.AI_API_KEY }}
