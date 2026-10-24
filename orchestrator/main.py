@@ -1,7 +1,7 @@
 """Entry point for the agentic PR reviewer.
 
-Verifies the GitHub token, builds the LLM from env config, and (for now)
-logs one sanity-check reply — the full review pipeline grows into ``main``.
+Wires the Step 4 pipeline end-to-end: build PR context → run the logic
+reviewer → render findings into a ``🤖 AI Review`` comment → post it.
 Run as a module from the repo root: ``python -m orchestrator.main``.
 """
 
@@ -10,8 +10,12 @@ import logging
 
 from dotenv import load_dotenv
 
-from agents.llm import get_llm, resolve_model
-from clients.github import verify_connection
+from agents.llm import resolve_model
+from agents.reviewer_agents.factory import build_reviewer
+from agents.reviewer_agents.parser import FindingParseError
+from clients.github import post_review_comment, verify_connection
+from models.finding import Finding
+from orchestrator.context_builder import build_context
 
 load_dotenv()
 
@@ -44,25 +48,63 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def render_comment(findings: list[Finding]) -> str:
+    """Render findings into the body of a ``🤖 AI Review`` comment.
+
+    The MARKER line is prepended by ``post_review_comment``. Step 7 splits
+    this into "Previous findings" / "New findings" sections once memory
+    exists; until then one flat list is the whole story.
+    """
+    if not findings:
+        return "## Review Findings\n\nNo issues found. 🎉"
+    lines = ["## Review Findings", "", f"Found {len(findings)} issue(s):", ""]
+    for f in findings:
+        lines += [
+            f"### {f.id} — {f.title}",
+            f"`{f.file}:{f.line}` · severity: **{f.severity}** · "
+            f"confidence: {f.confidence:.2f}",
+            "",
+            f.description,
+            "",
+        ]
+    return "\n".join(lines).rstrip()
+
+
+def run_review(pr_number: int) -> list[Finding]:
+    """Full review pass for one PR: context → reviewer → comment on GitHub."""
+    # Config errors (missing provider/key) raise RuntimeError here, before
+    # any GitHub write — fail fast rather than half way through a review.
+    provider, model = resolve_model()
+    logger.info("Using LLM provider=%s model=%s", provider, model)
+    
+    context = build_context(pr_number)
+    reviewer = build_reviewer("logic-reviewer")
+    findings = reviewer.review_findings(context)
+    logger.info("Reviewer returned %d finding(s)", len(findings))
+
+    post_review_comment(pr_number, render_comment(findings))
+    return findings
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logger.info("Starting review for PR #%s (event: %s)", args.pr, args.event)
-    # Fail fast on a missing/bad token before doing any work. CI's
-    # secrets.GITHUB_TOKEN is an installation token with no user identity,
-    # so we fetch the repo (not GET /user) to verify it.
-    repo_full_name = verify_connection()
-    logger.info("GitHub token OK for repo: %s", repo_full_name)
-    # Config errors (missing provider/key) are logged and exit 1 — the
-    # GitHub Action then fails on that same message.
+    if args.pr == 0:
+        # Manual workflow-dispatch test path: proves the runner boots, without
+        # needing a real PR to review.
+        logger.info("Manual dispatch (--pr 0): no PR to review; done.")
+        return 0
     try:
-        provider, model = resolve_model()
-        llm = get_llm()
-    except RuntimeError as exc:
-        logger.error("LLM config error: %s", exc)
+        repo_full_name = verify_connection()
+        logger.info("GitHub token OK for repo: %s", repo_full_name)
+        run_review(args.pr)
+    except (RuntimeError, FindingParseError) as exc:
+        # RuntimeError = env/config (token, provider, repo) or GitHub API
+        # trouble; FindingParseError = the reviewer produced unparseable
+        # output twice. Both fail the run loudly — an empty or missing
+        # comment must never look like a clean review.
+        logger.error("Review failed: %s", exc)
         return 1
-    logger.info("Using LLM provider=%s model=%s", provider, model)
-    response = llm.invoke("What LLM Agent are you?")
-    logger.info("LLM response: %s", response.content)
     return 0
 
 
