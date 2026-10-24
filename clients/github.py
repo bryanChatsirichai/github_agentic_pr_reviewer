@@ -1,14 +1,12 @@
 """GitHub client module — all GitHub reads/writes behind one module.
 
-Step 2 of the implementation roadmap. Every public function accepts an
-optional injected ``repo`` (:class:`github.Repository.Repository`) or
-``client`` (:class:`github.Github`); when neither is given, a client and the
-repository are built lazily from the ``GITHUB_TOKEN`` / ``GITHUB_REPOSITORY``
-environment variables (GitHub CI sets both; locally GITHUB_TOKEN comes from
-``.env``). This keeps the module testable offline: tests inject a mock
-client/repo and never touch the network. No globals are mutated at import
-time. Lives in ``clients/`` — the home for external-service clients
-(client for a second forge would join it here).
+Every public function accepts an optional injected ``repo``
+(:class:`github.Repository.Repository`) or ``client`` (:class:`github.Github`);
+when neither is given, a client and the repository are built lazily from the
+``GITHUB_TOKEN`` / ``GITHUB_REPOSITORY`` environment variables (GitHub CI sets
+both; locally GITHUB_TOKEN comes from ``.env``). This keeps the module
+testable offline: tests inject a mock client/repo and never touch the network.
+No globals are mutated at import time.
 """
 
 import logging
@@ -27,8 +25,8 @@ logger = logging.getLogger("pr-reviewer.github")
 #: so later runs can find previous reviews via ``get_existing_review_comments``.
 MARKER = "🤖 AI Review"
 
-#: The module's public API — names exported on `from ... import *`.
-#: Anything not listed (e.g. the private _helpers) is internal plumbing.
+#: The module's public API — anything not listed (e.g. the _helpers) is
+#: internal plumbing.
 __all__ = [
     "MARKER",
     "verify_connection",

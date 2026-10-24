@@ -8,21 +8,38 @@ fully reversible at any time. See design §1251 and §1850–1854.
 
 | Model | Provider | Input | Output | Free tier | Verdict |
 |---|---|---|---|---|---|
-| gemini-3.8-flash | Google | $0.75 | $3.75 | ✅ ~1,500 req/day (10 RPM, 250K tok/min), no expiry, no card | **Recommended for PoC dev** |
+| gemini-3.8-flash | Google | $0.75 | $3.75 | ✅ ~20 req/day (thinking model; ~50s–2min/call, ignores format instructions) | Good quality, too slow/flaky for dev loop |
 | gpt-5.6-luna | OpenAI | $0.20 | $1.20 | ❌ ($5 signup credits, expires ~3 months) | Cheapest paid; best schema enforcement |
 | gpt-5.4-mini | OpenAI | $0.75 | $4.50 | ❌ | Quality step-up from Luna |
 | claude-haiku-4.5 | Anthropic | $1.00 | $5.00 | ❌ ($5 signup credits) | Safest tool-calling if agent loops get flaky |
-| gemini-3.5-flash-lite | Google | $0.30 | $2.50 | ✅ | Diff summarization only; weak on subtle bugs |
+| gemini-3.5-flash-lite | Google | $0.30 | $2.50 | ✅ ~500 req/day (fast: ~5s/call, follows format instructions) | **Recommended for PoC dev** |
 | deepseek-v4 | DeepSeek | $0.14 | $0.28 | ⚠️ limited | Avoid for agent loops — unreliable tool-calling |
 | claude-sonnet-5 | Anthropic | $2.00 | $10.00 | ❌ | When review quality matters (prod tier) |
 
 ## Recommendation
 
-- **Development:** `google_genai:gemini-3.8-flash` on the free tier — covers the whole PoC at $0.
+- **Development:** `google_genai:gemini-3.5-flash-lite` on the free tier — fast (~5s/call), follows format instructions, ~500 req/day covers the whole PoC at $0. Verified too slow on 3.8-flash free tier: 50s–2min/call (thinking) and it ignored the sanity-check prompt.
 - **Demos / paid tier:** `openai:gpt-5.6-luna` ($0.03–0.10 per PR review) — cheapest solid option.
 - **If loops get flaky** (malformed JSON, misfired tool calls): climb one rung to `claude-haiku-4.5`.
 - **Future quality tier** for the reviewer/judge split (design §1854): Gemini Flash for the cheap
   first pass + GPT or Claude for judging — the split works across providers, not just models.
+
+## Switching providers (env config)
+
+`agents/llm.py` resolves the model from env — switching providers is a one-value
+change, locally and in CI. `MODEL_PROVIDER` selects one of:
+
+| `MODEL_PROVIDER` | Key env (required) | Model env (optional) | Default model |
+|---|---|---|---|
+| `google` | `GOOGLE_API_KEY` | `GOOGLE_MODEL` | `gemini-3.5-flash-lite` |
+| `openai` | `OPENAI_API_KEY` | `OPENAI_MODEL` | `gpt-5.6-luna` |
+| `claude` | `ANTHROPIC_API_KEY` | `CLAUDE_MODEL` | `claude-haiku-4.5` |
+
+`MODEL_PROVIDER` is **required** (case-insensitive, no aliases): if it is unset
+or unknown, the run logs the error and exits 1 — locally and in CI alike. Keep
+all three keys configured (in `.env` locally, as repo *secrets* in CI) and
+flipping `MODEL_PROVIDER` (a repo *variable* in CI, or a `model_provider` input
+for caller repos) is the only change needed.
 
 ## Cost reference
 

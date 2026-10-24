@@ -5,28 +5,46 @@ An agentic pull-request review system: GitHub PR events trigger LLM-driven revie
 Design: [`docs/agentic-pr-review-system-design.v1.md`](docs/agentic-pr-review-system-design.v1.md)
 Roadmap: [`docs/implementation-roadmap.md`](docs/implementation-roadmap.md)
 Framework decision: [`docs/framework-decision.md`](docs/framework-decision.md)
+Multi-repo integration: [`docs/multi-repo-integration.md`](docs/multi-repo-integration.md)
 
 ## Quickstart
 
 Requires [uv](https://docs.astral.sh/uv/).
 
 ```bash
-cp .env.example .env   # fill in GITHUB_TOKEN and GITHUB_REPOSITORY (owner/repo)
+cp .env.example .env   # fill in GITHUB_TOKEN, GITHUB_REPOSITORY, and the LLM key for your provider
 uv sync                # install deps (Python 3.12 managed by uv)
-uv run python orchestrator/main.py --pr 123 --event opened
 uv run pytest          # test suite
+uv run python -m orchestrator.main --pr 123 --event opened
 ```
 
 ## Usage
 
+Run as a module from the repo root with `uv run` (activating `.venv` manually also works — `uv run` handles it):
+
 ```bash
-uv run python orchestrator/main.py --pr <PR_NUMBER> --event <EVENT>
+uv run python -m orchestrator.main --pr <PR_NUMBER> --event <EVENT>
 ```
+
+### Examples
+
+```bash
+# Full review of PR #123 (as if the PR was just opened)
+uv run python -m orchestrator.main --pr 123 --event opened
+
+# Incremental review of PR #123 (as if a new commit was pushed)
+uv run python -m orchestrator.main --pr 123 --event synchronize
+
+# Manual dispatch path — no PR context, LLM + GitHub connectivity check only
+uv run python -m orchestrator.main
+```
+
+Omitting both arguments is equivalent to `--pr 0 --event push` (the defaults).
 
 | Argument | Required | Values | Meaning |
 |---|---|---|---|
-| `--pr` | yes | any integer | Pull request number to review (the number in the GitHub URL: `github.com/you/repo/pull/123`). In CI this is filled in automatically by the GitHub Actions workflow. Defaults to `0` for manual dispatch runs. |
-| `--event` | yes | see table below | The GitHub event that triggered the review. |
+| `--pr` | no (default `0`) | any integer | Pull request number to review (the number in the GitHub URL: `github.com/you/repo/pull/123`). In CI this is filled in automatically by the GitHub Actions workflow. `0` means no PR context (manual dispatch run). |
+| `--event` | no (default `push`) | see table below | The GitHub event that triggered the review. |
 
 **Event values** (exactly what the GitHub Actions workflow can send):
 
@@ -39,7 +57,19 @@ uv run python orchestrator/main.py --pr <PR_NUMBER> --event <EVENT>
 
 The workflow has **no `push` trigger** — commits to branches without an open PR trigger nothing. Manual testing uses the "Run workflow" button (or `gh workflow run pr-review.yml`), which runs the `push` code path with `--pr 0`. Rapid pushes to a PR branch cancel superseded in-flight runs via `concurrency`.
 
-Invalid values (e.g. `--pr abc`, a missing argument, or an unknown event) are rejected with a usage message and exit code 2. A successful run logs a startup line and exits 0.
+Invalid values (e.g. `--pr abc`, or an unknown event) are rejected with a usage message and exit code 2. A successful run logs a startup line and exits 0.
+
+### Required environment variables
+
+Read from `.env` (loaded automatically) or the surrounding environment. See [`.env.example`](.env.example) and [`docs/llm-providers.md`](docs/llm-providers.md) for the full LLM provider scheme.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `GITHUB_TOKEN` | yes | GitHub token with repo/PR access (`gh auth token` locally, `secrets.GITHUB_TOKEN` in CI) |
+| `GITHUB_REPOSITORY` | yes | Repo under review, as `owner/repo` — set automatically by GitHub Actions |
+| `MODEL_PROVIDER` | yes | `google` \| `openai` \| `claude` — selects the LLM provider; if unset (or unknown) the run logs an error and exits 1 |
+| `GOOGLE_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | one, matching `MODEL_PROVIDER` | API key for the chosen provider |
+| `GOOGLE_MODEL` / `OPENAI_MODEL` / `CLAUDE_MODEL` | no | Model override; a sensible default per provider is used when unset |
 
 ## Using the reviewer on other repositories
 
@@ -50,6 +80,11 @@ PRs in another repo, copy the caller workflow template
 repo as `.github/workflows/pr-review.yml` (push to the default branch). The
 template ships with commented-out security gates — fork blocking, author
 allowlists, target-branch restrictions — uncomment the ones you want:
+
+Full guide — how token/repository context flows from caller to reusable
+workflow, setup steps, caveats (fork PRs, permissions, private-repo
+limitations), and the alternatives considered:
+[`docs/multi-repo-integration.md`](docs/multi-repo-integration.md)
 
 Notes:
 - This repo must stay **public** for the checkout in `pr-review-reusable.yml`

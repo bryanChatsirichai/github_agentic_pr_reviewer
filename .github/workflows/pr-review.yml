@@ -30,8 +30,15 @@ jobs:
       # `secrets.GITHUB_TOKEN` is provisioned automatically by Actions.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_REPOSITORY: ${{ github.repository }}
-      # TODO Step 4+: LLM access
-      # AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      # Step 4: LLM access — MODEL_PROVIDER (google | openai | claude) as a
+      # repo *variable* is the one value to flip when switching providers;
+      # the matching key secret is then picked automatically. Required —
+      # if the variable is missing, the run logs an error and exits 1
+      # (see docs/llm-providers.md).
+      MODEL_PROVIDER: ${{ vars.MODEL_PROVIDER }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
