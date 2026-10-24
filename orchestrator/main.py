@@ -11,6 +11,7 @@ import os
 
 from dotenv import load_dotenv
 
+from agents import llm
 from agents.llm import resolve_model
 from agents.reviewer_agents.factory import build_reviewer
 from agents.reviewer_agents.parser import FindingParseError
@@ -126,7 +127,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.pr == 0:
         # Manual workflow-dispatch test path: proves the runner boots, without
         # needing a real PR to review.
-        logger.info("Manual dispatch (--pr 0): no PR to review; done.")
+        repo_full_name = verify_connection()
+        logger.info("GitHub token OK for repo: %s", repo_full_name)
+        chat_model = llm.get_llm()
+        response = chat_model.invoke("Testing what model is being used")
+        logger.info("Response: %s", response)
+        logger.info("Manual dispatch (--pr 0): no PR to review, done.")
         return 0
     try:
         repo_full_name = verify_connection()
