@@ -21,15 +21,17 @@ class FindingParseError(Exception):
     """Reviewer output could not be parsed into a list of Findings."""
 
 
-def parse_findings(raw: str) -> list[Finding]:
+def parse_findings(raw: str | list) -> list[Finding]:
     """Parse raw model output into ``list[Finding]``.
 
-    Repairs two common LLM quirks before strict validation: markdown code
-    fences around the JSON, and prose before/after the array. Anything
-    else that isn't a JSON array of Finding-shaped objects raises
+    Repairs common LLM quirks before strict validation: markdown code
+    fences around the JSON, prose before/after the array, and LangChain
+    returning ``AIMessage.content`` as a list of content blocks (Gemini
+    does this intermittently) instead of a string. Anything else that
+    isn't a JSON array of Finding-shaped objects raises
     ``FindingParseError`` with the reason.
     """
-    text = _extract_json_array(_strip_code_fences(raw))
+    text = _extract_json_array(_strip_code_fences(_content_to_text(raw)))
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -45,6 +47,25 @@ def parse_findings(raw: str) -> list[Finding]:
         raise FindingParseError(
             f"finding {first.get('loc')} failed validation: {first['msg']}"
         ) from exc
+
+
+def _content_to_text(raw: str | list) -> str:
+    """Flatten ``AIMessage.content`` into a plain string.
+
+    LangChain models return ``content`` as either a string or a list of
+    content blocks (``{"type": "text", "text": ...}`` dicts or bare
+    strings); Gemini returns the list form intermittently. Non-text
+    blocks (thinking, tool calls) are dropped.
+    """
+    if isinstance(raw, str):
+        return raw
+    parts: list[str] = []
+    for block in raw:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") == "text":
+            parts.append(block.get("text", ""))
+    return "".join(parts)
 
 
 def _strip_code_fences(text: str) -> str:
