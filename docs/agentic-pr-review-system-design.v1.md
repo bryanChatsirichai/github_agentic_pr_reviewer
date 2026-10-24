@@ -340,7 +340,25 @@ Project C ──┘
 - Updating the workflow means updating multiple repositories.
 - Shared configuration can become harder to manage.
 
-### Option 2 — Shared reusable GitHub Actions workflow
+### Option 2 — Shared reusable GitHub Actions workflow ✅ (IMPLEMENTED — see docs/multi-repo-integration.md)
+
+> **Current design (Oct 2026).** This option is implemented as
+> `pr-review-reusable.yml` (workflow_call) in this repo, invoked by thin caller
+> workflows in target repos (`templates/pr-review-caller.yml`; first consumer:
+> `chrome_sidebar_extension`). Key mechanics of a *called* workflow:
+>
+> - `github.token` / `github.repository` / `github.event` are **inherited from
+>   the caller** — the token is scoped to the calling repo, so the reviewer
+>   posts comments on the caller's PRs with the permissions the caller grants.
+> - The checkout is **pinned to this repo** (public) because the default
+>   checkout would fetch the caller's repo, where `orchestrator/` doesn't exist.
+> - LLM secrets (`GOOGLE_API_KEY` etc.) are **explicitly forwarded** by the
+>   caller; `model_provider` arrives as a `with:` input.
+> - The self-review workflow (`pr-review.yml`) stays separate deliberately: in a
+>   called workflow `github.event.pull_request.head.sha` belongs to the caller's
+>   PR, so one conditional file would resolve the wrong sha.
+>
+> Full integration guide: [`docs/multi-repo-integration.md`](multi-repo-integration.md).
 
 Once the reviewer works, a better approach for multiple repositories is to define the workflow once in a central repository and let other repositories call it.
 

@@ -5,6 +5,7 @@ An agentic pull-request review system: GitHub PR events trigger LLM-driven revie
 Design: [`docs/agentic-pr-review-system-design.v1.md`](docs/agentic-pr-review-system-design.v1.md)
 Roadmap: [`docs/implementation-roadmap.md`](docs/implementation-roadmap.md)
 Framework decision: [`docs/framework-decision.md`](docs/framework-decision.md)
+Multi-repo integration: [`docs/multi-repo-integration.md`](docs/multi-repo-integration.md)
 
 ## Quickstart
 
@@ -66,7 +67,7 @@ Read from `.env` (loaded automatically) or the surrounding environment. See [`.e
 |---|---|---|
 | `GITHUB_TOKEN` | yes | GitHub token with repo/PR access (`gh auth token` locally, `secrets.GITHUB_TOKEN` in CI) |
 | `GITHUB_REPOSITORY` | yes | Repo under review, as `owner/repo` — set automatically by GitHub Actions |
-| `MODEL_PROVIDER` | yes* | `google` \| `openai` \| `claude` — selects the LLM provider. *If unset, the legacy `AI_API_KEY` + `MODEL_NAME` pair is honored instead. |
+| `MODEL_PROVIDER` | yes | `google` \| `openai` \| `claude` — selects the LLM provider; if unset (or unknown) the run logs an error and exits 1 |
 | `GOOGLE_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | one, matching `MODEL_PROVIDER` | API key for the chosen provider |
 | `GOOGLE_MODEL` / `OPENAI_MODEL` / `CLAUDE_MODEL` | no | Model override; a sensible default per provider is used when unset |
 
@@ -79,6 +80,11 @@ PRs in another repo, copy the caller workflow template
 repo as `.github/workflows/pr-review.yml` (push to the default branch). The
 template ships with commented-out security gates — fork blocking, author
 allowlists, target-branch restrictions — uncomment the ones you want:
+
+Full guide — how token/repository context flows from caller to reusable
+workflow, setup steps, caveats (fork PRs, permissions, private-repo
+limitations), and the alternatives considered:
+[`docs/multi-repo-integration.md`](docs/multi-repo-integration.md)
 
 Notes:
 - This repo must stay **public** for the checkout in `pr-review-reusable.yml`
