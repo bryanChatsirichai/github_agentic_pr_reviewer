@@ -29,21 +29,18 @@ PROVIDERS: dict[str, dict[str, str]] = {
     },
 }
 
-__all__ = ["get_llm"]
+__all__ = ["PROVIDERS", "get_llm", "resolve_model"]
 
 
-def get_llm() -> BaseChatModel:
-    """Build the reviewer's chat model from env config.
+def resolve_model() -> tuple[str, str]:
+    """Validate ``MODEL_PROVIDER`` and return ``(provider, model)``.
 
     ``MODEL_PROVIDER`` (required, case-insensitive) picks the provider:
-    ``google`` | ``openai`` | ``claude``. The matching ``<PROVIDER>_API_KEY``
-    env var is required; ``<PROVIDER>_MODEL`` (``GOOGLE_MODEL`` /
-    ``OPENAI_MODEL`` / ``CLAUDE_MODEL``) overrides the provider's default
-    model. Switching providers means changing one value — flip
-    ``MODEL_PROVIDER``.
-
-    Raises RuntimeError (missing provider, unknown provider, or missing key)
-    so failures surface immediately; orchestrator.main logs it and exits 1.
+    ``google`` | ``openai`` | ``claude``. ``<PROVIDER>_MODEL``
+    (``GOOGLE_MODEL`` / ``OPENAI_MODEL`` / ``CLAUDE_MODEL``) overrides the
+    provider's default model. Raises RuntimeError (missing or unknown
+    provider) so failures surface immediately; orchestrator.main logs it
+    and exits 1.
     """
     provider = os.environ.get("MODEL_PROVIDER", "").strip()
     if not provider:
@@ -59,11 +56,24 @@ def get_llm() -> BaseChatModel:
             f"expected one of: {', '.join(sorted(PROVIDERS))}"
         )
     spec = PROVIDERS[provider]
+    model = os.environ.get(spec["model_env"]) or spec["default_model"]
+    return provider, model
+
+
+def get_llm() -> BaseChatModel:
+    """Build the reviewer's chat model from env config.
+
+    See ``resolve_model`` for provider/model selection. The matching
+    ``<PROVIDER>_API_KEY`` env var is required; raises RuntimeError when
+    missing so failures surface immediately; orchestrator.main logs it
+    and exits 1.
+    """
+    provider, model = resolve_model()
+    spec = PROVIDERS[provider]
     api_key = os.environ.get(spec["key_env"])
     if not api_key:
         raise RuntimeError(
             f"{spec['key_env']} is not set — add it to .env or the CI "
             f"secret (selected via MODEL_PROVIDER={provider})"
         )
-    model = os.environ.get(spec["model_env"]) or spec["default_model"]
     return init_chat_model(f"{spec['prefix']}:{model}", api_key=api_key)

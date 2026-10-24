@@ -10,7 +10,7 @@ import logging
 
 from dotenv import load_dotenv
 
-from agents.llm import get_llm
+from agents.llm import get_llm, resolve_model
 from clients.github import verify_connection
 
 load_dotenv()
@@ -55,10 +55,12 @@ def main(argv: list[str] | None = None) -> int:
     # Config errors (missing provider/key) are logged and exit 1 — the
     # GitHub Action then fails on that same message.
     try:
+        provider, model = resolve_model()
         llm = get_llm()
     except RuntimeError as exc:
         logger.error("LLM config error: %s", exc)
         return 1
+    logger.info("Using LLM provider=%s model=%s", provider, model)
     response = llm.invoke("What LLM Agent are you?")
     logger.info("LLM response: %s", response.content)
     return 0
