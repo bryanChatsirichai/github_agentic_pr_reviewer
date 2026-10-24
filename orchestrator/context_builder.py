@@ -1,9 +1,9 @@
 """PR context builder — turns raw GitHub data into one ``PRContext``.
 
-Step 3 of the implementation roadmap. ``build_context`` is the single place
-that calls the Step 2 GitHub client (``clients/github.py``) and assembles its
-output into the object every later agent/graph step consumes. Like the
-client, the GitHub ``repo`` / ``client`` can be injected for offline tests.
+``build_context`` is the single place that calls the GitHub client
+(``clients/github.py``) and assembles its output into the object every later
+agent/graph step consumes. Like the client, the GitHub ``repo`` / ``client``
+can be injected for offline tests.
 """
 
 import logging
@@ -29,7 +29,7 @@ def build_context(
 
     Combines PR metadata, the unified diff, changed files, and existing bot
     comments into one object. ``previous_findings`` stays empty — memory
-    lands in Step 6.
+    isn't implemented yet.
     """
     metadata = github.get_pull_request(pr_number, repo=repo, client=client)
     changed_files = github.get_pr_files(pr_number, repo=repo, client=client)

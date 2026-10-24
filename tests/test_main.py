@@ -24,10 +24,9 @@ def test_main_exits_cleanly(monkeypatch) -> None:
 def test_main_logs_and_exits_on_llm_config_error(monkeypatch) -> None:
     # Missing provider/key raises RuntimeError in get_llm — main must log
     # it and exit 1 (which fails the GitHub Action on the same message).
+    def raise_config_error():
+        raise RuntimeError("MODEL_PROVIDER is not set")
+
     monkeypatch.setattr(main_module, "verify_connection", lambda: "test-bot")
-    monkeypatch.setattr(
-        main_module, "get_llm", lambda: (_ for _ in ()).throw(
-            RuntimeError("MODEL_PROVIDER is not set")
-        )
-    )
+    monkeypatch.setattr(main_module, "get_llm", raise_config_error)
     assert main(["--pr", "123", "--event", "opened"]) == 1

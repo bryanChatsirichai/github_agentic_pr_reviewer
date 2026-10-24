@@ -1,19 +1,13 @@
-"""LLM factory — the one place that turns env config into a chat model.
-
-Bare-minimum slice of Step 4 (see docs/implementation-roadmap.md): just
-enough to call an LLM from the GitHub Action. No prompts, parsing, or
-Finding model yet — those land with the rest of Step 4.
-"""
+"""LLM factory — the one place that turns env config into a chat model."""
 
 import os
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
-#: Per-provider env wiring. MODEL_PROVIDER selects the entry; the entry's
-#: key_env/model_env are then read (model falls back to default_model, chosen
-#: from docs/llm-providers.md). prefix is the langchain provider id used to
-#: build the "provider:model" string for init_chat_model.
+#: Per-provider env wiring. MODEL_PROVIDER picks the entry; prefix is the
+#: langchain provider id for init_chat_model's "provider:model" string.
+#: Defaults come from docs/llm-providers.md.
 PROVIDERS: dict[str, dict[str, str]] = {
     "google": {
         "prefix": "google_genai",
@@ -45,8 +39,8 @@ def get_llm() -> BaseChatModel:
     ``google`` | ``openai`` | ``claude``. The matching ``<PROVIDER>_API_KEY``
     env var is required; ``<PROVIDER>_MODEL`` (``GOOGLE_MODEL`` /
     ``OPENAI_MODEL`` / ``CLAUDE_MODEL``) overrides the provider's default
-    model. Switching providers means changing one value — keep all three
-    keys configured and flip ``MODEL_PROVIDER``.
+    model. Switching providers means changing one value — flip
+    ``MODEL_PROVIDER``.
 
     Raises RuntimeError (missing provider, unknown provider, or missing key)
     so failures surface immediately; orchestrator.main logs it and exits 1.

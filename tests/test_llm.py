@@ -87,6 +87,6 @@ def test_claude_with_model_override(init_spy, monkeypatch):
 
 
 def test_missing_provider_key(init_spy, monkeypatch):
-    monkeypatch.setenv("MODEL_PROVIDER", "openai")  # but no OPENAI_API_KEY
+    monkeypatch.setenv("MODEL_PROVIDER", "openai")  # no OPENAI_API_KEY set
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY is not set"):
         get_llm()

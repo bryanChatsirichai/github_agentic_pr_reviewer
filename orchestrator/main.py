@@ -1,9 +1,8 @@
 """Entry point for the agentic PR reviewer.
 
-Step 0 skeleton + Step 2 sanity check (verify the GitHub token) + bare-minimum
-Step 4 (call the LLM once and log its reply). Later steps grow this into the
-full review pipeline. Run as a module from the repo root:
-``python -m orchestrator.main``.
+Verifies the GitHub token, builds the LLM from env config, and (for now)
+logs one sanity-check reply — the full review pipeline grows into ``main``.
+Run as a module from the repo root: ``python -m orchestrator.main``.
 """
 
 import argparse
@@ -48,14 +47,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logger.info("Starting review for PR #%s (event: %s)", args.pr, args.event)
-    # Sanity check: fail fast if the token is missing/bad before doing work.
-    # Returns the repo full name — CI's secrets.GITHUB_TOKEN has no user login.
+    # Fail fast on a missing/bad token before doing any work. CI's
+    # secrets.GITHUB_TOKEN is an installation token with no user identity,
+    # so we fetch the repo (not GET /user) to verify it.
     repo_full_name = verify_connection()
     logger.info("GitHub token OK for repo: %s", repo_full_name)
-    # Bare-minimum LLM call — proves the Action can reach the model. No
-    # prompt/context/parsing yet; that's the rest of Step 4. Config errors
-    # (missing provider/key) are logged and exit 1 — the GitHub Action then
-    # fails on that same message.
+    # Config errors (missing provider/key) are logged and exit 1 — the
+    # GitHub Action then fails on that same message.
     try:
         llm = get_llm()
     except RuntimeError as exc:
@@ -63,8 +61,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     response = llm.invoke("What LLM Agent are you?")
     logger.info("LLM response: %s", response.content)
-    # Full review pipeline (context → prompt → findings → comment) lands
-    # here in the rest of Step 4.
     return 0
 
 

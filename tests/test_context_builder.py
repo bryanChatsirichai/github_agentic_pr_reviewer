@@ -59,7 +59,6 @@ def test_build_context_populates_every_field() -> None:
     assert len(ctx.changed_files) == 3
     # Only the bot comment (id 501) survives; the human one (502) is filtered.
     assert [c["id"] for c in ctx.existing_comments] == [501]
-    # Memory doesn't exist yet — see roadmap Step 6.
     assert ctx.previous_findings == []
 
 
