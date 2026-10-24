@@ -64,6 +64,13 @@ def build_context(
         summary.diff_size,
         len(existing_comments),
     )
+    # Cap the list so huge PRs (hundreds of files) can't flood one log line.
+    shown, hidden = summary.file_list[:30], len(summary.file_list) - 30
+    logger.info(
+        "Changed files: %s%s",
+        ", ".join(shown),
+        f" (+{hidden} more)" if hidden > 0 else "",
+    )
     logger.debug("PRContext for PR #%s:\n%s", pr_number, _debug_preview(context))
     return context
 
