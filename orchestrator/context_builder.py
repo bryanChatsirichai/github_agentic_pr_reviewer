@@ -64,4 +64,39 @@ def build_context(
         summary.diff_size,
         len(existing_comments),
     )
+    logger.debug("PRContext for PR #%s:\n%s", pr_number, _debug_preview(context))
     return context
+
+
+#: Max chars of each long section (body, diff) shown in the DEBUG preview.
+_PREVIEW_LIMIT = 1500
+
+
+def _truncated(text: str) -> str:
+    """Shorten a section for the debug preview, noting what was cut."""
+    if not text:
+        return "(empty)"
+    if len(text) <= _PREVIEW_LIMIT:
+        return text
+    return f"{text[:_PREVIEW_LIMIT]}\n… [truncated {_PREVIEW_LIMIT}/{len(text)} chars]"
+
+
+def _debug_preview(context: PRContext) -> str:
+    """Human-readable, truncated dump of a PRContext for DEBUG logging.
+
+    Shows structure (metadata, file list, body, diff head) — never the
+    full payload, which can be tens of thousands of chars and would bury
+    the log lines around it.
+    """
+    return "\n".join(
+        [
+            f"  title:   {context.title}",
+            f"  author:  {context.author}",
+            f"  branches: {context.base_branch}…{context.head_branch}",
+            f"  shas:     {context.base_sha[:10]}…{context.head_sha[:10]}",
+            f"  files:    {', '.join(context.summary.file_list)}",
+            f"  body:     {_truncated(context.body)}",
+            f"  diff:",
+            _truncated(context.diff),
+        ]
+    )

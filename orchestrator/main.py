@@ -7,6 +7,7 @@ Run as a module from the repo root: ``python -m orchestrator.main``.
 
 import argparse
 import logging
+import os
 
 from dotenv import load_dotenv
 
@@ -22,6 +23,12 @@ load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+# Debug verbosity for OUR loggers only (pr-reviewer.* — e.g. the truncated
+# PR context preview in context_builder). Scoping to this namespace keeps
+# LOG_LEVEL=DEBUG from also enabling very chatty httpx/google_genai output.
+logging.getLogger("pr-reviewer").setLevel(
+    os.environ.get("LOG_LEVEL", "INFO").upper()
 )
 logger = logging.getLogger("pr-reviewer")
 
