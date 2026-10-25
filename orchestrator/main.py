@@ -134,19 +134,17 @@ def run_review(pr_number: int) -> ReviewResult:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logger.info("Starting review for PR #%s (event: %s)", args.pr, args.event)
-    if args.pr == 0:
-        # Manual workflow-dispatch test path: proves the runner boots, without
-        # needing a real PR to review.
-        repo_full_name = verify_connection()
-        logger.info("GitHub token OK for repo: %s", repo_full_name)
-        chat_model = llm.get_llm()
-        response = chat_model.invoke("Testing what model is being used")
-        logger.info("Response: %s", response)
-        logger.info("Manual dispatch (--pr 0): no PR to review, done.")
-        return 0
     try:
         repo_full_name = verify_connection()
         logger.info("GitHub token OK for repo: %s", repo_full_name)
+        if args.pr == 0:
+            # Manual workflow-dispatch test path: proves the runner boots,
+            # without needing a real PR to review.
+            chat_model = llm.get_llm()
+            response = chat_model.invoke("Testing what model is being used")
+            logger.info("Response: %s", response)
+            logger.info("Manual dispatch (--pr 0): no PR to review, done.")
+            return 0
         run_review(args.pr)
     except (RuntimeError, GithubException, FindingParseError) as exc:
         # RuntimeError = env/config (token, provider, repo); GithubException

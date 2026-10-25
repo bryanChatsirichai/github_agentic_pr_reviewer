@@ -77,6 +77,16 @@ def test_main_manual_dispatch_does_not_review(monkeypatch, stub_review) -> None:
     assert main(["--pr", "0", "--event", "push"]) == 0
 
 
+def test_main_manual_dispatch_exits_1_on_config_error(monkeypatch, stub_review) -> None:
+    # The --pr 0 smoke test takes the same logged failure path as a review.
+    def raise_config_error():
+        raise RuntimeError("MODEL_PROVIDER is not set")
+
+    monkeypatch.setattr(main_module.llm, "get_llm", raise_config_error)
+
+    assert main(["--pr", "0", "--event", "push"]) == 1
+
+
 def test_main_exits_1_on_config_error(monkeypatch, stub_review) -> None:
     # Missing LLM config → exit 1 (fails the Action) before any GitHub write.
     def raise_config_error():
