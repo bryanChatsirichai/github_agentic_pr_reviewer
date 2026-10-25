@@ -2,7 +2,7 @@
 
 > **Status:** Draft / Design Proposal  
 > **Purpose:** Learning project and evolving architecture  
-> **Last updated:** 2026-10-22 (agent framework decision: LangGraph — see [`framework-decision.md`](framework-decision.md))
+> **Last updated:** 2026-10-25 (memory storage decision: state embedded in bot PR comments — see §6; incremental-diff rule — §14). 2026-10-22: agent framework decision: LangGraph — see [`framework-decision.md`](framework-decision.md)
 
 ---
 
@@ -191,7 +191,7 @@ GitHub PR opened / new commit
             ↓
      setup Python
             ↓
-   python orchestrator/main.py
+   python -m orchestrator.main
             ↓
         LangGraph
             ↓
@@ -230,7 +230,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run PR agent
-        run: python orchestrator/main.py
+        run: python -m orchestrator.main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
@@ -340,7 +340,25 @@ Project C ──┘
 - Updating the workflow means updating multiple repositories.
 - Shared configuration can become harder to manage.
 
-### Option 2 — Shared reusable GitHub Actions workflow
+### Option 2 — Shared reusable GitHub Actions workflow ✅ (IMPLEMENTED — see docs/multi-repo-integration.md)
+
+> **Current design (Oct 2026).** This option is implemented as
+> `pr-review-reusable.yml` (workflow_call) in this repo, invoked by thin caller
+> workflows in target repos (`templates/pr-review-caller.yml`; first consumer:
+> `chrome_sidebar_extension`). Key mechanics of a *called* workflow:
+>
+> - `github.token` / `github.repository` / `github.event` are **inherited from
+>   the caller** — the token is scoped to the calling repo, so the reviewer
+>   posts comments on the caller's PRs with the permissions the caller grants.
+> - The checkout is **pinned to this repo** (public) because the default
+>   checkout would fetch the caller's repo, where `orchestrator/` doesn't exist.
+> - LLM secrets (`GOOGLE_API_KEY` etc.) are **explicitly forwarded** by the
+>   caller; `model_provider` arrives as a `with:` input.
+> - The self-review workflow (`pr-review.yml`) stays separate deliberately: in a
+>   called workflow `github.event.pull_request.head.sha` belongs to the caller's
+>   PR, so one conditional file would resolve the wrong sha.
+>
+> Full integration guide: [`docs/multi-repo-integration.md`](multi-repo-integration.md).
 
 Once the reviewer works, a better approach for multiple repositories is to define the workflow once in a central repository and let other repositories call it.
 
@@ -553,25 +571,40 @@ Example:
 
 # 6. Where Memory Can Live
 
-### Version 1 — GitHub + JSON
+### Version 1 — State embedded in bot PR comments ✅ (decided 2026-10-25)
 
-Simple learning implementation:
+Each bot review comment ends with a hidden, machine-readable state block:
 
-```text
-agent-state/
-└── pr-123.json
+```markdown
+🤖 AI Review
+## Review Findings
+...human-readable findings...
+
+<!-- ai-review-state:v1
+{"schema_version":1,"reviewed_sha":"abc789","base_ref":"main",
+ "base_merge_sha":"9f1e2d","next_id":4,"file_shas":{"src/x.py":"1a2b..."},
+ "findings":[{"id":"F001","status":"resolved","rejected_by":null,
+   "severity":"medium","file":"src/x.py","line":82,
+   "title":"Page not validated","description":"...","snippet":"offset = page * size"}]}
+-->
 ```
 
-Advantages:
+- **Load:** scan issue comments newest-first; take the first authored by the bot login (default `github-actions[bot]`, configurable for a future GitHub App) that contains `MARKER` and a state block passing pydantic validation. Corrupt newest block → fall back to an older valid one; none → empty state (full review). Parsed state is untrusted input.
+- **Save:** the state travels inside every posted comment — no separate write. Newest valid comment = current state; older comments = free history.
+- **Encoding:** escape `<`/`>` as `<`/`>` after `json.dumps` so a snippet containing `-->` cannot break out of the HTML comment.
+- **Size:** comment bodies max out at 65,536 chars; cap the block at ~20k, dropping the oldest `closed`/`rejected` findings first.
+- **Visibility:** the block is hidden in the rendered page but readable in the raw comment source — including findings that are "recorded in memory only" (§23).
 
-- Easy to understand
-- Easy to debug
-- No database required
+Why not the alternatives:
 
-Disadvantages:
+| Option | Problem |
+|---|---|
+| Local `memory/pr-N.json` | Every Actions run starts on a fresh runner — the file is gone next run |
+| Commit to repo / orphan branch | Needs `contents: write` on callers' repos; push conflicts |
+| `actions/cache` | Evicted after 7 days unused, 10 GB/repo cap, scoped to `refs/pull/N/merge` |
+| Actions artifacts | 90-day default retention; must look up the previous run's artifact |
 
-- Less suitable for many repositories
-- Concurrent workflow handling becomes harder
+`load_memory` / `save_memory` stay the only interface, so Version 2 can replace the storage behind them without touching callers.
 
 ### Version 2 — Database
 
@@ -1067,10 +1100,12 @@ This is where the system becomes stateful.
 
 ### Step 1 — Load memory
 
+State comes from the newest valid bot comment (§6). `reopened` events take this same stateful path.
+
 Previous state:
 
 ```text
-previous_sha = abc456
+reviewed_sha = abc456
 
 F001 = open
 F002 = open
@@ -1090,7 +1125,22 @@ Instead of treating the PR as completely new:
 abc456 → abc789
 ```
 
-Review the new changes.
+Review the new changes — but only when that range is pure PR work. Decision rule (never use `pr.base.sha`; it does not move with the base branch):
+
+- **incremental:** `base_ref` unchanged, merge-base of target vs head equals the stored `base_merge_sha`, and `compare(reviewed_sha, head).status == "ahead"`
+- **full** (PR diff from per-file patches): status `diverged`, merge-base moved, `base_ref` changed, or the old SHA is gone (404/422)
+- **noop:** status `identical` → exit without posting
+
+| Scenario | Diff mode |
+|---|---|
+| New commits pushed (one or many at once) | incremental |
+| Base branch moves ahead (not merged in) | incremental |
+| Base branch merged into the PR branch / "Update branch" (merge) | full |
+| Rebase / force-push / "Update branch" (rebase) | full |
+| Child PR (B → A) merged into this PR's branch | incremental (= B's changes) |
+| Base retargeted (stacked PR after parent merged) | full |
+| Job re-run at the same SHA | noop |
+| Push while the PR has merge conflicts | no run (GitHub skips); picked up by the next run |
 
 ### Step 3 — Re-check old findings
 
@@ -1100,6 +1150,8 @@ Ask:
 Is F001 resolved?
 Is F002 resolved?
 ```
+
+Findings whose file blob SHA is unchanged keep their status without an LLM call (works in every diff mode). Resolved findings whose file changed are re-checked too — that is how regressions (§21) are caught. New findings are deduped against stored ones so a full-diff fallback doesn't re-report old issues under new IDs.
 
 ### Step 4 — Check for new findings
 
@@ -1300,7 +1352,7 @@ Ready for human review.
 | Tool protocol | MCP |
 | Git operations | Git CLI |
 | GitHub integration | GitHub API / GitHub CLI |
-| Memory | JSON or SQLite |
+| Memory | JSON state embedded in bot PR comments (§6) |
 | Tests | Repository's existing test framework |
 | State format | JSON |
 | Deployment | GitHub Actions |
@@ -1433,6 +1485,18 @@ closed
 
 A finding can be reopened if a later commit reintroduces the problem.
 
+Allowed transitions (enforced in `orchestrator/memory.py`; anything else raises):
+
+```text
+new       → open
+open      → resolved | rejected
+resolved  → reopened | verified
+reopened  → resolved | rejected
+verified  → closed
+```
+
+`rejected` carries `rejected_by: critic | developer` — the critic (Step 12) and an accepted developer explanation (§22) both reject, and the audit trail must say which.
+
 ---
 
 # 21. Important: Regressions
@@ -1491,6 +1555,12 @@ Third review:
 ```
 
 The finding ID should connect the AI finding to the GitHub review thread.
+
+Rules:
+
+- **Post only on change:** a new comment only when a status changed or there are new findings. Otherwise post nothing — `reviewed_sha` stays put and the next run's range covers the skipped commits.
+- **Dedupe against memory** (same file + matching snippet or title) before assigning new IDs.
+- **Developer explanations:** a developer can reply with an issue comment such as `F001: intentional — page is validated upstream`. Comments created after the last state comment that mention a finding ID are passed to the re-check as untrusted data, **only** from the PR author or `author_association` OWNER / MEMBER / COLLABORATOR (on a public repo anyone can comment). The LLM judges the justification; accepted → `rejected` with `rejected_by=developer`, acknowledged in the next comment. Explanations are read on the next run; replying alone does not trigger one (see §30).
 
 ---
 
@@ -1901,10 +1971,21 @@ These should remain open while the project is being developed.
 
 ### Memory
 
-- JSON?
-- SQLite?
-- PostgreSQL?
-- GitHub as the primary source of truth?
+- ~~JSON? SQLite? PostgreSQL? GitHub as the primary source of truth?~~ **Decided 2026-10-25: state embedded in bot PR comments** (§6).
+- When to move to an external DB (cross-PR metrics, reviewer accuracy, org-wide)?
+
+### Triggers
+
+- Add `pull_request: edited`, filtered on `github.event.changes.base`, so a retarget re-reviews immediately? Needs job-level `concurrency` (and `github.workflow` in the group name) so title/body edits don't cancel an in-progress review.
+- Add `issue_comment: created` (with `if: github.event.issue.pull_request`) so a developer explanation is processed without a new push? Note it always runs the workflow from the default branch.
+
+### Known limitations (accepted for now)
+
+- Fork PRs: no secrets and a read-only token → no review posted, no state saved.
+- Pushes/merges made with `GITHUB_TOKEN` do not start workflow runs — no review until the next human push.
+- Findings are per-PR: a dismissal on PR B is not carried to PR A when B merges into A's branch.
+- API caps: compare returns at most 300 files; the PR files API at most 3,000 files, and `patch` may be missing for large/binary files.
+- State block size (§6).
 
 ### Tools
 
@@ -1922,11 +2003,16 @@ These should remain open while the project is being developed.
 
 ### Review behavior
 
-- Comment only?
-- Review summary?
-- Inline comments?
-- GitHub suggestions?
-- Automatically request changes?
+- ~~Comment only? Review summary? Inline comments?~~ **Decided 2026-10-25:** a summary comment through Step 9, then inline review threads from roadmap Step 9b. That is the earliest point where the bot can tell resolved from still-open findings, so threads don't get re-posted on every push, and it comes before the Step 10 graph refactor:
+  - One review per run via `create_review(event="COMMENT")`. The review body holds the summary and the state block (§6); each reportable finding becomes an inline comment, and its id is stored on the finding (`thread_id`).
+  - Re-check outcomes become thread actions: resolved → "✅ Resolved in `<sha>`" reply and the thread resolved through GraphQL `resolveReviewThread` (no PyGithub wrapper); still open → silence (§22); reopened → reply in the same thread.
+  - Developer explanations come from thread replies (`in_reply_to_id`), so the `F00x:` convention (§22) is no longer needed. The same author-association filter applies.
+  - Constraints:
+    - GitHub only accepts inline comments on lines in the diff (422 otherwise, failing the whole review), so lines are checked against the patch hunks first and unplaceable findings go in the summary only.
+    - Threads go outdated when the line moves; an open finding is re-posted at its new line using the stored snippet.
+- GitHub suggestions (` ```suggestion ` blocks)? Open — pairs with automation Level 3.
+- Automatically request changes? **No for now:** `APPROVE`/`REQUEST_CHANGES` from `github-actions[bot]` is gated by the repo setting "Allow GitHub Actions to create and approve pull requests" (off by default), and a human remains the approver (§25).
+- Unverified until tried on a real PR: that `resolveReviewThread` works with the workflow's `GITHUB_TOKEN` (`pull-requests: write`), and the exact 422 behaviour.
 
 ### Automation level
 

@@ -1,22 +1,38 @@
 """Entry point for the agentic PR reviewer.
 
-Step 0 skeleton + Step 2 sanity check: parse --pr and --event, verify the
-GitHub token, exit cleanly. Later steps grow the review pipeline. Run as a
-module from the repo root: ``python -m orchestrator.main``.
+Pipeline: build PR context → run the logic reviewer → render findings into
+a ``🤖 AI Review`` comment → post it. Run as a module from the repo root:
+``python -m orchestrator.main``.
 """
 
 import argparse
 import logging
+import os
 
 from dotenv import load_dotenv
+from github import GithubException
 
-from clients.github import verify_connection
+from agents import llm
+from agents.llm import resolve_model
+from agents.reviewer_agents.factory import build_reviewer
+from agents.reviewer_agents.parser import FindingParseError
+from clients.github import post_review_comment, verify_connection
+from models.pr_context import PRContext
+from models.review import ReviewResult
+from orchestrator.context_builder import build_context
+from orchestrator.memory import load_memory, save_memory
 
 load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+# Debug verbosity for OUR loggers only (pr-reviewer.* — e.g. the truncated
+# PR context preview in context_builder). Scoping to this namespace keeps
+# LOG_LEVEL=DEBUG from also enabling very chatty httpx/google_genai output.
+logging.getLogger("pr-reviewer").setLevel(
+    os.environ.get("LOG_LEVEL", "INFO").upper()
 )
 logger = logging.getLogger("pr-reviewer")
 
@@ -43,14 +59,101 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def render_comment(context: PRContext, result: ReviewResult) -> str:
+    """Render the review verdict into the body of a ``🤖 AI Review`` comment.
+
+    Metadata (branch, commit, files) comes from the PRContext, not the
+    agent — known facts must not be restated by a model that could
+    misremember them. The overall rating is the agent's judgment. The
+    MARKER line is prepended by ``post_review_comment``.
+    """
+    files = context.summary.file_list
+    lines = [
+        "## Review Findings",
+        "",
+        f"**Overall: {result.overall_rating}** · "
+        f"branch `{context.head_branch}` @ `{context.head_sha[:10]}` · "
+        f"{len(files)} file(s) checked",
+        "",
+        _files_section(files),
+        "",
+    ]
+    findings = result.findings
+    if not findings:
+        lines += ["No issues found. 🎉"]
+        return "\n".join(lines).rstrip()
+    lines += [f"Found {len(findings)} issue(s):", ""]
+    for f in findings:
+        lines += [
+            f"### {f.id} — {f.title}",
+            f"`{f.file}:{f.line}` · severity: **{f.severity}** · "
+            f"confidence: {f.confidence:.2f}",
+            "",
+            f.description,
+            "",
+        ]
+    return "\n".join(lines).rstrip()
+
+
+def _files_section(files: list[str], inline_limit: int = 10) -> str:
+    """List the checked files, collapsed once the list gets long."""
+    if len(files) <= inline_limit:
+        return "Files checked: " + (", ".join(files) if files else "(none)")
+    listed = "\n".join(f"- {name}" for name in files)
+    return f"<details>\n<summary>Files checked ({len(files)})</summary>\n\n{listed}\n\n</details>"
+
+
+def run_review(pr_number: int) -> ReviewResult:
+    """Full review pass for one PR: context → reviewer → comment on GitHub."""
+    # Config errors (missing provider/key) raise RuntimeError here, before
+    # any GitHub write — fail fast rather than half way through a review.
+    provider, model = resolve_model()
+    logger.info("Using LLM provider=%s model=%s", provider, model)
+
+    # Memory is a no-op stub until Step 6; loading it here keeps the flow
+    # shape final. Step 7 feeds these findings into the reviewer prompt.
+    previous_findings = load_memory(pr_number)
+    logger.info("Loaded %d previous finding(s) from memory", len(previous_findings))
+
+    context = build_context(pr_number)
+    reviewer = build_reviewer("logic-reviewer")
+    result = reviewer.review(context)
+    logger.info(
+        "Reviewer returned %d finding(s), rating=%s",
+        len(result.findings),
+        result.overall_rating,
+    )
+
+    post_review_comment(pr_number, render_comment(context, result))
+    # Save only after a successful post: a failed post must not record
+    # findings the developer never saw.
+    save_memory(pr_number, result.findings)
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logger.info("Starting review for PR #%s (event: %s)", args.pr, args.event)
-    # Sanity check: fail fast if the token is missing/bad before doing work.
-    # Returns the repo full name — CI's secrets.GITHUB_TOKEN has no user login.
-    repo_full_name = verify_connection()
-    logger.info("GitHub token OK for repo: %s", repo_full_name)
-    # Review pipeline lands here in later steps.
+    try:
+        repo_full_name = verify_connection()
+        logger.info("GitHub token OK for repo: %s", repo_full_name)
+        if args.pr == 0:
+            # Manual workflow-dispatch test path: proves the runner boots,
+            # without needing a real PR to review.
+            chat_model = llm.get_llm()
+            response = chat_model.invoke("Testing what model is being used")
+            logger.info("Response: %s", response)
+            logger.info("Manual dispatch (--pr 0): no PR to review, done.")
+            return 0
+        run_review(args.pr)
+    except (RuntimeError, GithubException, FindingParseError) as exc:
+        # RuntimeError = env/config (token, provider, repo); GithubException
+        # = GitHub API failure (forbidden, missing PR/repo); FindingParseError
+        # = the reviewer produced unparseable output twice. All fail the run
+        # loudly — an empty or missing comment must never look like a clean
+        # review.
+        logger.error("Review failed: %s", exc)
+        return 1
     return 0
 
 

@@ -1,9 +1,9 @@
 """PR context builder — turns raw GitHub data into one ``PRContext``.
 
-Step 3 of the implementation roadmap. ``build_context`` is the single place
-that calls the Step 2 GitHub client (``clients/github.py``) and assembles its
-output into the object every later agent/graph step consumes. Like the
-client, the GitHub ``repo`` / ``client`` can be injected for offline tests.
+``build_context`` is the single place that calls the GitHub client
+(``clients/github.py``) and assembles its output into the object every later
+agent/graph step consumes. Like the client, the GitHub ``repo`` / ``client``
+can be injected for offline tests.
 """
 
 import logging
@@ -28,8 +28,8 @@ def build_context(
     """Fetch PR #``pr_number`` via the GitHub client and pack it into a ``PRContext``.
 
     Combines PR metadata, the unified diff, changed files, and existing bot
-    comments into one object. ``previous_findings`` stays empty — memory
-    lands in Step 6.
+    comments into one object. ``previous_findings`` stays empty until
+    memory exists.
     """
     metadata = github.get_pull_request(pr_number, repo=repo, client=client)
     changed_files = github.get_pr_files(pr_number, repo=repo, client=client)
@@ -64,4 +64,45 @@ def build_context(
         summary.diff_size,
         len(existing_comments),
     )
+    # Cap the list so huge PRs (hundreds of files) can't flood one log line.
+    shown, hidden = summary.file_list[:30], len(summary.file_list) - 30
+    logger.info(
+        "Changed files: %s%s",
+        ", ".join(shown),
+        f" (+{hidden} more)" if hidden > 0 else "",
+    )
+    logger.debug("PRContext for PR #%s:\n%s", pr_number, _debug_preview(context))
     return context
+
+
+#: Max chars of each long section (body, diff) shown in the DEBUG preview.
+_PREVIEW_LIMIT = 1500
+
+
+def _truncated(text: str) -> str:
+    """Shorten a section for the debug preview, noting what was cut."""
+    if not text:
+        return "(empty)"
+    if len(text) <= _PREVIEW_LIMIT:
+        return text
+    return f"{text[:_PREVIEW_LIMIT]}\n… [truncated {_PREVIEW_LIMIT}/{len(text)} chars]"
+
+
+def _debug_preview(context: PRContext) -> str:
+    """Human-readable, truncated dump of a PRContext for DEBUG logging.
+
+    Shows structure (metadata, file list, body, diff head) — never the full
+    payload, which would bury the log lines around it.
+    """
+    return "\n".join(
+        [
+            f"  title:   {context.title}",
+            f"  author:  {context.author}",
+            f"  branches: {context.base_branch}…{context.head_branch}",
+            f"  shas:     {context.base_sha[:10]}…{context.head_sha[:10]}",
+            f"  files:    {', '.join(context.summary.file_list)}",
+            f"  body:     {_truncated(context.body)}",
+            f"  diff:",
+            _truncated(context.diff),
+        ]
+    )

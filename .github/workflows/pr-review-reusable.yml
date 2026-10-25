@@ -10,8 +10,13 @@
 #   jobs:
 #     review:
 #       uses: bryanChatsirichai/github_agentic_pr_reviewer/.github/workflows/pr-review-reusable.yml@main
+#       with:
+#         model_provider: google        # google | openai | claude
+#         google_model: ${{ vars.GOOGLE_MODEL }}   # optional override
 #       secrets:
-#         AI_API_KEY: ${{ secrets.AI_API_KEY }}
+#         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+#         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+#         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 #
 # Key semantics of a *called* workflow:
 #   - github.repository → the CALLING repo (e.g. repo-A), not this repo.
@@ -27,11 +32,44 @@ name: pr-review (reusable)
 
 on:
   workflow_call:
+    # Which provider the reviewer uses: google | openai | claude (see
+    # agents/llm.py). Required at runtime — if empty, the reviewer logs an
+    # error and exits 1.
+    inputs:
+      model_provider:
+        description: "google | openai | claude — selects the API key + model"
+        required: false
+        type: string
+        default: ""
+      # Optional model overrides (not secret — callers pass them from their
+      # repo variables). Empty → the provider's default model is used.
+      google_model:
+        description: "Gemini model name — used when model_provider=google"
+        required: false
+        type: string
+        default: ""
+      openai_model:
+        description: "OpenAI model name — used when model_provider=openai"
+        required: false
+        type: string
+        default: ""
+      claude_model:
+        description: "Claude model name — used when model_provider=claude"
+        required: false
+        type: string
+        default: ""
     # Secrets the caller passes in. A called workflow cannot reach the
-    # caller repo's secrets unless they are explicitly passed.
+    # caller repo's secrets unless they are explicitly passed. Only the one
+    # matching model_provider needs a value; pass the rest empty.
     secrets:
-      AI_API_KEY:
-        description: LLM API key for the reviewer agent (used from Step 4+)
+      GOOGLE_API_KEY:
+        description: Google (Gemini) API key — used when model_provider=google
+        required: false
+      OPENAI_API_KEY:
+        description: OpenAI API key — used when model_provider=openai
+        required: false
+      ANTHROPIC_API_KEY:
+        description: Anthropic (Claude) API key — used when model_provider=claude
         required: false
 
 jobs:
@@ -73,5 +111,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          # Passed by the caller from ITS repo secrets; empty until created.
-          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          # Provider selection + per-provider keys, passed by the caller from
+          # ITS repo variable/secrets; empty until created.
+          MODEL_PROVIDER: ${{ inputs.model_provider }}
+          GOOGLE_MODEL: ${{ inputs.google_model }}
+          OPENAI_MODEL: ${{ inputs.openai_model }}
+          CLAUDE_MODEL: ${{ inputs.claude_model }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
