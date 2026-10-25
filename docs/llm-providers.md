@@ -24,6 +24,41 @@ fully reversible at any time. See design §1251 and §1850–1854.
 - **Future quality tier** for the reviewer/judge split (design §1854): Gemini Flash for the cheap
   first pass + GPT or Claude for judging — the split works across providers, not just models.
 
+## Gateway option: OpenCode Zen (evaluated Oct 2026, not wired up)
+
+[OpenCode Zen](https://opencode.ai/docs/zen/) is a pay-as-you-go gateway: **one API key**
+covers Google, OpenAI and Anthropic models. It proxies each provider's *native* API rather
+than normalizing to one format, so the existing LangChain classes still apply — only the
+`base_url` and key change:
+
+| Provider | Zen endpoint | LangChain class |
+|---|---|---|
+| OpenAI | `https://opencode.ai/inference/openai/v1/responses` | `ChatOpenAI` (Responses API required for GPT models) |
+| Anthropic | `https://opencode.ai/inference/anthropic/v1/messages` | `ChatAnthropic` |
+| Google | `https://opencode.ai/inference/google/v1beta/models/<id>` | `ChatGoogleGenerativeAI` (custom endpoint — least certain) |
+
+Untested: the LangChain wiring above has not been run against Zen.
+
+- **Pricing:** matches the table above for flash-lite, Luna, gpt-5.4-mini, Haiku 4.5 and
+  Sonnet 5, plus a **4.6% + $0.31 fee per credit top-up**. Zen lists gemini-3.8-flash at
+  $1.50 / $7.50 — double the table's figure; unclear whether that is a Zen markup or the
+  table is stale, so check Google's direct price.
+- **No free tier for our use:** Zen's free models are restricted to the OpenCode client, and
+  Gemini via Zen is paid — so it **does not replace the Google free tier for dev**.
+- **Data retention:** Gemini/DeepSeek zero-retention; OpenAI/Anthropic requests retained 30 days.
+- **Prompt caching** through the proxy is undocumented — the cost reference below assumes it works.
+- **OpenCode Go** ($10/mo subscription, separate key) is **not suitable**: built for interactive
+  coding agents, traffic is monitored for abuse, requires an `x-opencode-session` header, and
+  doesn't include gemini-3.5-flash-lite.
+
+**Verdict:** viable as a single-key convenience for paid runs (would be a fourth
+`MODEL_PROVIDER`), not a cost saver. Keep Google direct for dev.
+
+**Newer models seen on Zen, worth evaluating** (Zen prices; verify direct prices first):
+- `claude-haiku-5-5`: $0.10 / $0.50 (≤100K input), $0.50 / $2.50 above — a typical review
+  (50–150K input) can cross the tier. Far cheaper than `claude-haiku-4.5` if it holds.
+- `gpt-6-luna`: $0.10 / $0.50 (≤272K input) — half the price of `gpt-5.6-luna`.
+
 ## Switching providers (env config)
 
 `agents/llm.py` resolves the model from env — switching providers is a one-value
