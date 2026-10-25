@@ -12,6 +12,7 @@
 #       uses: bryanChatsirichai/github_agentic_pr_reviewer/.github/workflows/pr-review-reusable.yml@main
 #       with:
 #         model_provider: google        # google | openai | claude
+#         google_model: ${{ vars.GOOGLE_MODEL }}   # optional override
 #       secrets:
 #         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
 #         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -37,6 +38,23 @@ on:
     inputs:
       model_provider:
         description: "google | openai | claude — selects the API key + model"
+        required: false
+        type: string
+        default: ""
+      # Optional model overrides (not secret — callers pass them from their
+      # repo variables). Empty → the provider's default model is used.
+      google_model:
+        description: "Gemini model name — used when model_provider=google"
+        required: false
+        type: string
+        default: ""
+      openai_model:
+        description: "OpenAI model name — used when model_provider=openai"
+        required: false
+        type: string
+        default: ""
+      claude_model:
+        description: "Claude model name — used when model_provider=claude"
         required: false
         type: string
         default: ""
@@ -96,6 +114,9 @@ jobs:
           # Provider selection + per-provider keys, passed by the caller from
           # ITS repo variable/secrets; empty until created.
           MODEL_PROVIDER: ${{ inputs.model_provider }}
+          GOOGLE_MODEL: ${{ inputs.google_model }}
+          OPENAI_MODEL: ${{ inputs.openai_model }}
+          CLAUDE_MODEL: ${{ inputs.claude_model }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

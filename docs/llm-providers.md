@@ -74,7 +74,10 @@ change, locally and in CI. `MODEL_PROVIDER` selects one of:
 or unknown, the run logs the error and exits 1 — locally and in CI alike. Keep
 all three keys configured (in `.env` locally, as repo *secrets* in CI) and
 flipping `MODEL_PROVIDER` (a repo *variable* in CI, or a `model_provider` input
-for caller repos) is the only change needed.
+for caller repos) is the only change needed. Model overrides are not
+sensitive, so in CI they are repo *variables* too (`vars.GOOGLE_MODEL` etc.);
+caller repos pass them as the `google_model` / `openai_model` /
+`claude_model` inputs (see `templates/pr-review-caller.yml`).
 
 ## Cost reference
 

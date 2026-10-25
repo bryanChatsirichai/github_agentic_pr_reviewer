@@ -31,7 +31,7 @@ General rules:
 - [x] Step 1 — GitHub Actions trigger
 - [x] Step 2 — GitHub client module
 - [x] Step 3 — PR context builder
-- [ ] Step 4 — First LLM review (no memory, no graph)
+- [x] Step 4 — First LLM review (no memory, no graph)
 - [ ] Step 5 — Re-review on every commit (still stateless)
 - [ ] Step 6 — Finding store (JSON memory)
 - [ ] Step 7 — Wire memory into the review flow
@@ -151,7 +151,7 @@ tests/test_context_builder.py
 
 ---
 
-### [ ] Step 4 — First LLM review (no memory, no graph)
+### [x] Step 4 — First LLM review (no memory, no graph)
 
 **Goal:** The complete design §29 "first implementation" loop: PR → LLM → comment.
 
@@ -161,9 +161,10 @@ tests/test_context_builder.py
 
 ```text
 models/finding.py          # Finding + statuses — the contract every later step uses
-models/review_result.py
+models/review.py           # ReviewResult (planned as models/review_result.py)
 agents/reviewer_agents/prompts/logic-reviewer.md
 agents/reviewer_agents/factory.py          # build a reviewer from prompt + model
+agents/reviewer_agents/parser.py           # JSON repair + validation into ReviewResult
 orchestrator/memory.py     # no-op stub only, keeps the main flow shape final
 ```
 Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
@@ -177,6 +178,8 @@ Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 6. `memory.py`: `load_memory()` returns empty state, `save_memory()` is a no-op.
 
 **Done when:** Open a PR with an intentionally broken change (e.g., unvalidated input); the bot posts one comment containing at least the planted issue as a structured finding.
+
+**Verified (2026-10-25):** on PR #4 instead of a planted bug — the bot reported three real issues as structured findings (uncaught `GithubException`, bracket-in-prose JSON recovery, manual-dispatch error path), each confirmed by hand and fixed with a regression test.
 
 ---
 

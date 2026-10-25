@@ -69,7 +69,7 @@ Read from `.env` (loaded automatically) or the surrounding environment. See [`.e
 | `GITHUB_REPOSITORY` | yes | Repo under review, as `owner/repo` — set automatically by GitHub Actions |
 | `MODEL_PROVIDER` | yes | `google` \| `openai` \| `claude` — selects the LLM provider; if unset (or unknown) the run logs an error and exits 1 |
 | `GOOGLE_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | one, matching `MODEL_PROVIDER` | API key for the chosen provider |
-| `GOOGLE_MODEL` / `OPENAI_MODEL` / `CLAUDE_MODEL` | no | Model override; a sensible default per provider is used when unset |
+| `GOOGLE_MODEL` / `OPENAI_MODEL` / `CLAUDE_MODEL` | no | Model override; a sensible default per provider is used when unset. In CI these are repo *variables* (not secrets) |
 
 ## Using the reviewer on other repositories
 

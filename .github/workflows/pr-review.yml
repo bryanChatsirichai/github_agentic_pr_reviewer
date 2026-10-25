@@ -36,6 +36,11 @@ jobs:
       # if the variable is missing, the run logs an error and exits 1
       # (see docs/llm-providers.md).
       MODEL_PROVIDER: ${{ vars.MODEL_PROVIDER }}
+      # Optional model overrides — repo *variables* (model names are not
+      # secret). Unset → empty → the provider's default model is used.
+      GOOGLE_MODEL: ${{ vars.GOOGLE_MODEL }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      CLAUDE_MODEL: ${{ vars.CLAUDE_MODEL }}
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

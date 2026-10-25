@@ -74,3 +74,8 @@ jobs:
     # the matching key secret is picked up from the secrets block above.
     with:
       model_provider: google
+      # Optional model overrides from this repo's Actions *variables* (not
+      # secrets — model names aren't sensitive). Unset → provider default.
+      google_model: ${{ vars.GOOGLE_MODEL }}
+      openai_model: ${{ vars.OPENAI_MODEL }}
+      claude_model: ${{ vars.CLAUDE_MODEL }}
