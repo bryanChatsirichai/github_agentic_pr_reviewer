@@ -69,3 +69,46 @@ def test_build_context_diff_is_unified_and_matches_summary() -> None:
     assert ctx.diff.startswith("diff --git a/src/cli.py b/src/cli.py")
     assert ctx.summary.diff_size == len(ctx.diff)
     assert ctx.summary.file_list == [f["filename"] for f in fixture["files"]]
+
+
+def test_build_context_logs_changed_files_at_info_level(caplog) -> None:
+    fixture = load_pr_fixture()
+    repo = make_repo(fixture)
+
+    build_context(42, repo=repo)
+
+    info_text = "".join(r.getMessage() for r in caplog.records if r.levelname == "INFO")
+    assert "Changed files: src/cli.py, src/fibonacci.py, assets/logo.png" in info_text
+
+
+def test_build_context_logs_truncated_debug_preview(caplog) -> None:
+    import logging
+
+    fixture = load_pr_fixture()
+    repo = make_repo(fixture)
+
+    with caplog.at_level(logging.DEBUG, logger="pr-reviewer.context_builder"):
+        build_context(42, repo=repo)
+
+    debug_text = "".join(r.getMessage() for r in caplog.records)
+    # Structure is visible in the DEBUG preview…
+    assert "title:   " + fixture["title"] in debug_text
+    assert "author:  octocat" in debug_text
+    assert "files:    src/cli.py, src/fibonacci.py" in debug_text
+    assert "diff:" in debug_text
+    # …and the full diff is logged verbatim only while under the limit.
+    assert fixture["files"][0]["patch"] in debug_text
+
+
+def test_debug_preview_truncates_large_sections() -> None:
+    from orchestrator.context_builder import _debug_preview
+
+    fixture = load_pr_fixture()
+    ctx = build_context(42, repo=make_repo(fixture))
+    # Force a section over the preview limit.
+    ctx = ctx.model_copy(update={"diff": "x" * 5000})
+
+    preview = _debug_preview(ctx)
+
+    assert "x" * 100 in preview  # head of the section shown…
+    assert "[truncated 1500/5000 chars]" in preview  # …tail cut with a marker

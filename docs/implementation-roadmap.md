@@ -161,15 +161,15 @@ tests/test_context_builder.py
 ```text
 models/finding.py          # Finding + statuses — the contract every later step uses
 models/review_result.py
-agents/prompts/logic-reviewer.md
-agents/factory.py          # build a reviewer from prompt + model
+agents/reviewer_agents/prompts/logic-reviewer.md
+agents/reviewer_agents/factory.py          # build a reviewer from prompt + model
 orchestrator/memory.py     # no-op stub only, keeps the main flow shape final
 ```
 Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 
 **Tasks:**
 1. Finding model: id, status, severity, file, line, title, description, confidence — plus the status enum from design §20.
-2. `agents/factory.py`: `build_reviewer(name)` → model + system prompt loaded from the `.md` file, no tools yet.
+2. `agents/reviewer_agents/factory.py`: `build_reviewer(name)` → model + system prompt loaded from the `.md` file, no tools yet.
 3. Prompt: paste PR context and require **structured JSON findings output** matching the Finding model.
 4. Parse and validate LLM output into `list[Finding]` (reject/repair malformed JSON, one retry).
 5. `main.py`: build context → call reviewer → render findings into a `🤖 AI Review` comment → post via `post_review_comment`.
@@ -230,7 +230,7 @@ Implement the real `orchestrator/memory.py` (replacing the Step 4 stub).
 **Creates:**
 
 ```text
-agents/prompts/logic-reviewer.md   # gains a "previous findings" section
+agents/reviewer_agents/prompts/logic-reviewer.md   # gains a "previous findings" section
 ```
 (Plus edits in `main.py` / `memory.py` — no new modules.)
 
@@ -277,7 +277,7 @@ tests/test_diff.py
 **Creates:**
 
 ```text
-agents/prompts/recheck.md
+agents/reviewer_agents/prompts/recheck.md
 orchestrator/recheck.py
 tests/test_recheck.py
 ```
@@ -351,7 +351,7 @@ tools/__init__.py
 **Creates:**
 
 ```text
-agents/prompts/critic.md
+agents/reviewer_agents/prompts/critic.md
 ```
 (Plus a new node + loop edge in `graph/review_graph.py`.)
 
@@ -374,7 +374,7 @@ agents/prompts/critic.md
 **Creates:**
 
 ```text
-agents/prompts/judge.md
+agents/reviewer_agents/prompts/judge.md
 ```
 (Plus the real judge node replacing the Step 10 placeholder.)
 
@@ -397,8 +397,8 @@ agents/prompts/judge.md
 **Creates:**
 
 ```text
-agents/prompts/security-reviewer.md
-agents/prompts/testing-reviewer.md
+agents/reviewer_agents/prompts/security-reviewer.md
+agents/reviewer_agents/prompts/testing-reviewer.md
 ```
 
 **Tasks:**
