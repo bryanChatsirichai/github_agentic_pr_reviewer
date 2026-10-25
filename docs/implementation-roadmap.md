@@ -37,6 +37,7 @@ General rules:
 - [ ] Step 7 — Wire memory into the review flow
 - [ ] Step 8 — Incremental diff
 - [ ] Step 9 — Finding re-check pass
+- [ ] Step 9b — Inline review threads
 - [ ] Step 10 — LangGraph graph skeleton
 - [ ] Step 11 — Tools layer
 - [ ] Step 12 — Critic (verification loop)
@@ -214,7 +215,7 @@ tests/test_memory.py
 ```
 
 **Tasks:**
-1. State model: `schema_version`, `reviewed_sha`, `base_ref`, `base_merge_sha` (merge-base with the target branch at review time), `next_id`, `file_shas` (`{filename: blob_sha}` from the PR files API), and `findings[id, status, rejected_by, severity, file, line, title, description (≤300 chars), snippet]`. The orchestrator cuts `snippet` from the head file around `line` — the LLM is not trusted to copy it.
+1. State model: `schema_version`, `reviewed_sha`, `base_ref`, `base_merge_sha` (merge-base with the target branch at review time), `next_id`, `file_shas` (`{filename: blob_sha}` from the PR files API), and `findings[id, status, rejected_by, severity, file, line, title, description (≤300 chars), snippet, thread_id (null until Step 9b's inline threads)]`. The orchestrator cuts `snippet` from the head file around `line` — the LLM is not trusted to copy it.
 2. `render_state_block(state)` → `<!-- ai-review-state:v1 {json} -->` appended to the comment body. After `json.dumps`, escape `<`/`>` as `<`/`>` (still valid JSON) so a snippet containing `-->` cannot close the HTML comment early. Cap the block at ~20k chars (comment bodies max out at 65,536), dropping the oldest `closed`/`rejected` findings first.
 3. `load_memory(pr_number)` scans issue comments newest-first and returns the first one that (a) is authored by the configured bot login (default `github-actions[bot]`), (b) contains `MARKER`, and (c) has a state block that passes pydantic validation. A corrupt newest block falls back to an older valid one (so IDs don't restart at F001); none found → empty state (= full review). Treat the parsed state as untrusted.
 4. `save_memory` is not a separate write: state is saved only by a successful `post_review_comment` that carries the block.
@@ -299,9 +300,40 @@ tests/test_recheck.py
 3. Apply transitions through the Step 6 lifecycle table; a finding whose problem reappears goes `resolved → reopened`.
 4. Developer explanations: read human issue comments created after the last valid state comment that mention a finding ID (`F\d{3}`). Accept only from the PR author or `author_association` OWNER / MEMBER / COLLABORATOR; pass the text to the LLM as untrusted data. A justification the LLM accepts → `rejected` with `rejected_by=developer`, acknowledged in the next comment.
 5. Comment format from design §14: previous findings with ✅/🟡 markers, then new findings.
-6. Comment strategy: post a new summary comment only when something changed (Step 7 task 6). Inline review threads are a later upgrade.
+6. Comment strategy: post a new summary comment only when something changed (Step 7 task 6). Inline review threads come in Step 9b; state storage and re-check logic don't change for them.
 
 **Done when:** Full scenario test on a real PR: commit 1 plants F001 → commit 2 fixes it (F001 → resolved in state + comment) → commit 3 reintroduces it (F001 → reopened). Plus: a collaborator's "F00x: intentional because …" reply leads to `rejected (developer)`; the same reply from a non-collaborator is ignored. This is design §21 proven end-to-end.
+
+---
+
+### [ ] Step 9b — Inline review threads
+
+**Goal:** Each finding lives in an inline review thread on its line, and re-check outcomes become thread actions (resolve, stay quiet, reply) instead of only a new summary comment.
+
+**Why here:** this is the earliest point where inline comments don't create noise. Before Step 9 the bot can't tell resolved from still-open findings, so every push would re-post N inline comments. Placing it before Step 10 means the LangGraph refactor is verified with the final posting behaviour, so posting isn't restructured twice.
+
+**Depends on:** Step 9.
+
+**Creates:** nothing new. Edits to `clients/github.py` (review/thread functions) and the posting path in `main.py`.
+
+**Tasks:**
+1. Only posting and thread tracking change; the state block and re-check logic from Steps 6–9 stay as they are.
+2. Post via `pr.create_review(commit, body, event="COMMENT", comments=[{path, line, side, body}])`: the summary + state block goes in the review body, each finding becomes an inline comment. `event="COMMENT"` only — `APPROVE`/`REQUEST_CHANGES` from `github-actions[bot]` is gated by the repo setting "Allow GitHub Actions to create and approve pull requests" (off by default), and humans approve (design §25).
+3. Before posting, check each finding's `file`/`line` against the PR patch hunks. GitHub rejects inline comments on lines outside the diff with a 422 error, and one bad comment fails the whole review. Findings that can't be placed are listed in the summary only.
+4. Store the inline comment id on the finding (`thread_id` in the state block).
+5. Map re-check outcomes to thread actions:
+   - resolved → reply "✅ Resolved in `<sha>`" in the thread (`create_review_comment_reply`), then resolve the thread through GraphQL `resolveReviewThread` (PyGithub has no wrapper);
+   - still open → no new comment;
+   - reopened → reply in the same thread.
+6. Outdated threads: when a later commit moves the line, GitHub marks the thread outdated. A finding that is still open is re-posted at its new line, located via the stored `snippet`.
+7. Developer explanations: thread replies (`get_review_comments()`, linked through `in_reply_to_id`) are tied to their finding directly, replacing the `F00x:` convention from Step 9. The same author-association filter applies.
+8. Load state from the review body (it carries the state block now) as well as from issue comments, so PRs reviewed before this step keep their state.
+
+**Done when:** On a real PR:
+- each finding appears as a thread on its line;
+- a finding whose line is outside the diff appears in the summary only, and the review still posts;
+- fixing a finding in the next commit gets a "✅ Resolved" reply and a resolved thread;
+- a collaborator's reply in a thread is picked up as an explanation.
 
 ---
 
@@ -313,7 +345,7 @@ tests/test_recheck.py
 
 **Framework decision:** LangGraph 1.x, hand-built `StateGraph` with Pydantic state — see [`framework-decision.md`](framework-decision.md).
 
-**Depends on:** Step 9 (behavior must be complete and green *before* restructuring).
+**Depends on:** Step 9b (behavior must be complete and green *before* restructuring).
 
 **Creates:**
 
@@ -326,9 +358,9 @@ Also adds `langgraph` via `uv add langgraph`. `main.py` shrinks to: parse args �
 **Tasks:**
 1. Nodes: `load_memory` → `build_diff` → `review` → `recheck` → `judge_placeholder` (passthrough) → `update_memory` → `post_review`.
 2. State = a typed dict wrapping `PRContext` + intermediate results.
-3. No behavior change — outputs identical to Step 9's.
+3. No behavior change — outputs identical to Step 9b's.
 
-**Done when:** Re-running the Step 9 scenario through the graph produces identical memory state and comment content. Refactor verified by equivalence, not by eye.
+**Done when:** Re-running the Step 9 / 9b scenarios through the graph produces identical memory state, review content and thread actions. Refactor verified by equivalence, not by eye.
 
 ---
 
@@ -395,9 +427,9 @@ agents/reviewer_agents/prompts/judge.md
 1. Judge node: takes confirmed + uncertain findings, outputs final per-finding verdict + adjusted confidence.
 2. Confidence policy from design §23 as config constants (`REPORT_THRESHOLD=0.90`, `SUGGESTION_THRESHOLD=0.75`).
 3. Rendering: ≥0.90 normal, 0.75–0.89 labeled "suggestion / needs verification", <0.75 silently recorded in memory only.
-4. Decide comment shape: summary comment vs. inline review comments on specific lines (design §30) — implement one, note the other as future.
+4. Apply the policy to the inline threads from Step 9b: ≥0.90 posts a normal thread, 0.75–0.89 posts a thread labeled "suggestion / needs verification", <0.75 gets no thread (state only).
 
-**Done when:** A mixed PR (one clear bug, one borderline style-adjacent issue, one vague concern) yields: one normal comment, one "suggestion"-labeled comment, and one finding present in memory but absent from GitHub.
+**Done when:** A mixed PR (one clear bug, one borderline style-adjacent issue, one vague concern) yields: one normal inline thread, one "suggestion"-labeled thread, and one finding present in memory but absent from GitHub.
 
 ---
 
@@ -453,6 +485,9 @@ Step 0
                           │
                           ▼
                           Step 9
+                          │
+                          ▼
+                          Step 9b
                           │
                           ▼
                           Step 10

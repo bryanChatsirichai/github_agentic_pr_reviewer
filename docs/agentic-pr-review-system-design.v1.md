@@ -2003,11 +2003,16 @@ These should remain open while the project is being developed.
 
 ### Review behavior
 
-- Comment only?
-- Review summary?
-- Inline comments?
-- GitHub suggestions?
-- Automatically request changes?
+- ~~Comment only? Review summary? Inline comments?~~ **Decided 2026-10-25:** a summary comment through Step 9, then inline review threads from roadmap Step 9b. That is the earliest point where the bot can tell resolved from still-open findings, so threads don't get re-posted on every push, and it comes before the Step 10 graph refactor:
+  - One review per run via `create_review(event="COMMENT")`. The review body holds the summary and the state block (§6); each reportable finding becomes an inline comment, and its id is stored on the finding (`thread_id`).
+  - Re-check outcomes become thread actions: resolved → "✅ Resolved in `<sha>`" reply and the thread resolved through GraphQL `resolveReviewThread` (no PyGithub wrapper); still open → silence (§22); reopened → reply in the same thread.
+  - Developer explanations come from thread replies (`in_reply_to_id`), so the `F00x:` convention (§22) is no longer needed. The same author-association filter applies.
+  - Constraints:
+    - GitHub only accepts inline comments on lines in the diff (422 otherwise, failing the whole review), so lines are checked against the patch hunks first and unplaceable findings go in the summary only.
+    - Threads go outdated when the line moves; an open finding is re-posted at its new line using the stored snippet.
+- GitHub suggestions (` ```suggestion ` blocks)? Open — pairs with automation Level 3.
+- Automatically request changes? **No for now:** `APPROVE`/`REQUEST_CHANGES` from `github-actions[bot]` is gated by the repo setting "Allow GitHub Actions to create and approve pull requests" (off by default), and a human remains the approver (§25).
+- Unverified until tried on a real PR: that `resolveReviewThread` works with the workflow's `GITHUB_TOKEN` (`pull-requests: write`), and the exact 422 behaviour.
 
 ### Automation level
 
