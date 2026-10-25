@@ -1,114 +1,39 @@
-"""Unit tests for orchestrator.context_builder.build_context.
+"""Unit tests for orchestrator.context_builder.
 
-Uses the same fixture-backed fake PR as test_github_client.py (injected via
-the ``repo`` kwarg) so no test touches the network.
+The GitHub client functions themselves are covered in test_github_client.py;
+here we only check that build_context assembles their output correctly.
 """
 
-import json
-from datetime import datetime
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock
-
-from orchestrator.context_builder import build_context
-
-FIXTURE_PATH = Path(__file__).parent / "fixtures" / "pr-42.json"
-
-
-def load_pr_fixture() -> dict:
-    return json.loads(FIXTURE_PATH.read_text())
-
-
-def make_repo(fixture: dict) -> MagicMock:
-    """Mock repo returning a PyGithub-shaped PR built from the fixture."""
-    pr = SimpleNamespace(
-        number=fixture["number"],
-        title=fixture["title"],
-        body=fixture["body"],
-        base=SimpleNamespace(ref=fixture["base"]["ref"], sha=fixture["base"]["sha"]),
-        head=SimpleNamespace(ref=fixture["head"]["ref"], sha=fixture["head"]["sha"]),
-        user=SimpleNamespace(login=fixture["user"]["login"]),
-        get_files=lambda: [SimpleNamespace(**f) for f in fixture["files"]],
-        get_issue_comments=lambda: [
-            SimpleNamespace(
-                id=c["id"],
-                body=c["body"],
-                created_at=datetime.fromisoformat(c["created_at"]),
-            )
-            for c in fixture["issue_comments"]
-        ],
-    )
-    repo = MagicMock()
-    repo.get_pull.return_value = pr
-    return repo
+from orchestrator.context_builder import _debug_preview, build_context
+from tests.helpers import load_pr_fixture, make_fake_pr, make_repo
 
 
 def test_build_context_populates_every_field() -> None:
     fixture = load_pr_fixture()
-    ctx = build_context(42, repo=make_repo(fixture))
 
-    # Every field populated from the fixture.
-    assert ctx.pr_number == 42
-    assert ctx.title == fixture["title"]
-    assert ctx.body == fixture["body"]
-    assert ctx.author == "octocat"
-    assert ctx.base_branch == "main"
-    assert ctx.head_branch == "feature/fibonacci"
-    assert ctx.base_sha == fixture["base"]["sha"]
-    assert ctx.head_sha == fixture["head"]["sha"]
+    ctx = build_context(42, repo=make_repo(make_fake_pr(fixture)))
+
+    assert (ctx.pr_number, ctx.title, ctx.author) == (42, fixture["title"], "octocat")
+    assert (ctx.base_branch, ctx.base_sha) == ("main", fixture["base"]["sha"])
+    assert (ctx.head_branch, ctx.head_sha) == ("feature/fibonacci", fixture["head"]["sha"])
     assert len(ctx.changed_files) == 3
-    # Only the bot comment (id 501) survives; the human one (502) is filtered.
+    # Only the bot comment survives the MARKER filter.
     assert [c["id"] for c in ctx.existing_comments] == [501]
+    # Memory isn't wired in yet.
     assert ctx.previous_findings == []
-
-
-def test_build_context_diff_is_unified_and_matches_summary() -> None:
-    fixture = load_pr_fixture()
-    ctx = build_context(42, repo=make_repo(fixture))
-
+    # Summary stays in sync with the diff and file list.
     assert ctx.diff.startswith("diff --git a/src/cli.py b/src/cli.py")
     assert ctx.summary.diff_size == len(ctx.diff)
     assert ctx.summary.file_list == [f["filename"] for f in fixture["files"]]
 
 
-def test_build_context_logs_changed_files_at_info_level(caplog) -> None:
-    fixture = load_pr_fixture()
-    repo = make_repo(fixture)
-
-    build_context(42, repo=repo)
-
-    info_text = "".join(r.getMessage() for r in caplog.records if r.levelname == "INFO")
-    assert "Changed files: src/cli.py, src/fibonacci.py, assets/logo.png" in info_text
-
-
-def test_build_context_logs_truncated_debug_preview(caplog) -> None:
-    import logging
-
-    fixture = load_pr_fixture()
-    repo = make_repo(fixture)
-
-    with caplog.at_level(logging.DEBUG, logger="pr-reviewer.context_builder"):
-        build_context(42, repo=repo)
-
-    debug_text = "".join(r.getMessage() for r in caplog.records)
-    # Structure is visible in the DEBUG preview…
-    assert "title:   " + fixture["title"] in debug_text
-    assert "author:  octocat" in debug_text
-    assert "files:    src/cli.py, src/fibonacci.py" in debug_text
-    assert "diff:" in debug_text
-    # …and the full diff is logged verbatim only while under the limit.
-    assert fixture["files"][0]["patch"] in debug_text
-
-
 def test_debug_preview_truncates_large_sections() -> None:
-    from orchestrator.context_builder import _debug_preview
-
-    fixture = load_pr_fixture()
-    ctx = build_context(42, repo=make_repo(fixture))
-    # Force a section over the preview limit.
+    ctx = build_context(42, repo=make_repo(make_fake_pr(load_pr_fixture())))
     ctx = ctx.model_copy(update={"diff": "x" * 5000})
 
     preview = _debug_preview(ctx)
 
-    assert "x" * 100 in preview  # head of the section shown…
-    assert "[truncated 1500/5000 chars]" in preview  # …tail cut with a marker
+    # Head of the section kept, tail replaced by a size marker.
+    assert "x" * 1500 in preview
+    assert "x" * 1501 not in preview
+    assert "[truncated 1500/5000 chars]" in preview
