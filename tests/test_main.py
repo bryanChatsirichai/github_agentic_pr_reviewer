@@ -6,6 +6,7 @@ GitHub and the LLM are replaced by stubs via monkeypatch on orchestrator.main.
 from types import SimpleNamespace
 
 import pytest
+from github import GithubException
 
 import orchestrator.main as main_module
 from agents.reviewer_agents.parser import FindingParseError
@@ -53,6 +54,20 @@ def test_main_posts_review_comment(stub_review) -> None:
     assert "F001 — Missing input validation" in stub_review["body"]
 
 
+def test_main_loads_memory_before_and_saves_after_posting(monkeypatch, stub_review) -> None:
+    calls = []
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: calls.append("load") or [])
+    monkeypatch.setattr(
+        main_module, "post_review_comment", lambda pr, body: calls.append("post")
+    )
+    monkeypatch.setattr(
+        main_module, "save_memory", lambda pr, findings: calls.append(("save", pr, len(findings)))
+    )
+
+    assert main(["--pr", "42", "--event", "opened"]) == 0
+    assert calls == ["load", "post", ("save", 42, 1)]
+
+
 def test_main_manual_dispatch_does_not_review(monkeypatch, stub_review) -> None:
     # --pr 0 is the workflow_dispatch smoke test: it checks the token and
     # pings the LLM, but never builds a context or posts a review.
@@ -69,6 +84,17 @@ def test_main_exits_1_on_config_error(monkeypatch, stub_review) -> None:
 
     monkeypatch.setattr(main_module, "resolve_model", raise_config_error)
     monkeypatch.setattr(main_module, "post_review_comment", must_not_post)
+
+    assert main(["--pr", "42", "--event", "opened"]) == 1
+
+
+def test_main_exits_1_on_github_api_error(monkeypatch, stub_review) -> None:
+    # PyGithub errors (forbidden, missing PR) take the logged failure path,
+    # not an uncaught traceback.
+    def raise_github_error(pr, body):
+        raise GithubException(403, {"message": "Forbidden"})
+
+    monkeypatch.setattr(main_module, "post_review_comment", raise_github_error)
 
     assert main(["--pr", "42", "--event", "opened"]) == 1
 

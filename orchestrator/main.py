@@ -10,6 +10,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
+from github import GithubException
 
 from agents import llm
 from agents.llm import resolve_model
@@ -19,6 +20,7 @@ from clients.github import post_review_comment, verify_connection
 from models.pr_context import PRContext
 from models.review import ReviewResult
 from orchestrator.context_builder import build_context
+from orchestrator.memory import load_memory, save_memory
 
 load_dotenv()
 
@@ -108,6 +110,11 @@ def run_review(pr_number: int) -> ReviewResult:
     provider, model = resolve_model()
     logger.info("Using LLM provider=%s model=%s", provider, model)
 
+    # Memory is a no-op stub until Step 6; loading it here keeps the flow
+    # shape final. Step 7 feeds these findings into the reviewer prompt.
+    previous_findings = load_memory(pr_number)
+    logger.info("Loaded %d previous finding(s) from memory", len(previous_findings))
+
     context = build_context(pr_number)
     reviewer = build_reviewer("logic-reviewer")
     result = reviewer.review(context)
@@ -118,6 +125,9 @@ def run_review(pr_number: int) -> ReviewResult:
     )
 
     post_review_comment(pr_number, render_comment(context, result))
+    # Save only after a successful post: a failed post must not record
+    # findings the developer never saw.
+    save_memory(pr_number, result.findings)
     return result
 
 
@@ -138,11 +148,12 @@ def main(argv: list[str] | None = None) -> int:
         repo_full_name = verify_connection()
         logger.info("GitHub token OK for repo: %s", repo_full_name)
         run_review(args.pr)
-    except (RuntimeError, FindingParseError) as exc:
-        # RuntimeError = env/config (token, provider, repo) or GitHub API
-        # trouble; FindingParseError = the reviewer produced unparseable
-        # output twice. Both fail the run loudly — an empty or missing
-        # comment must never look like a clean review.
+    except (RuntimeError, GithubException, FindingParseError) as exc:
+        # RuntimeError = env/config (token, provider, repo); GithubException
+        # = GitHub API failure (forbidden, missing PR/repo); FindingParseError
+        # = the reviewer produced unparseable output twice. All fail the run
+        # loudly — an empty or missing comment must never look like a clean
+        # review.
         logger.error("Review failed: %s", exc)
         return 1
     return 0

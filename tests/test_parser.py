@@ -50,6 +50,7 @@ def test_parse_derives_missing_rating(raw, expected_rating) -> None:
     [
         f"```json\n{reply()}\n```",  # markdown code fence
         f"Here are my findings:\n{reply()}\nHope this helps.",  # surrounding prose
+        f"I found [one issue]:\n{reply()}",  # brackets in prose before the object
         # Gemini sometimes returns content as a list of blocks; non-text
         # blocks are dropped and text blocks joined, even mid-token.
         [{"type": "thinking", "thinking": "..."}, {"type": "text", "text": reply()}],

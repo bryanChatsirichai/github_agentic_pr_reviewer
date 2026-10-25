@@ -110,16 +110,23 @@ def _strip_code_fences(text: str) -> str:
 def _extract_json_payload(text: str) -> str:
     """Slice out the JSON payload (object or array), dropping surrounding prose.
 
-    Takes whichever of ``{`` / ``[`` appears first as the start and its
-    matching closer as the end — safe for brackets inside strings, since
-    the payload's own delimiters are the outermost ones in a reply whose
-    payload is a JSON object or array.
+    Slices both candidates (first ``{`` to last ``}``, first ``[`` to last
+    ``]``) and returns the first that is valid JSON, trying whichever opens
+    first before the other — so prose like "I found [one issue]." before
+    the object doesn't hijack the slice. If neither parses, the
+    first-opening slice is returned so the caller reports its JSON error.
     """
     obj_start, arr_start = text.find("{"), text.find("[")
+    obj = text[obj_start : text.rfind("}") + 1] if obj_start != -1 else ""
+    arr = text[arr_start : text.rfind("]") + 1] if arr_start != -1 else ""
     if obj_start != -1 and (arr_start == -1 or obj_start < arr_start):
-        start, end = obj_start, text.rfind("}")
+        candidates = (obj, arr)
     else:
-        start, end = arr_start, text.rfind("]")
-    if start != -1 and end > start:
-        return text[start : end + 1]
-    return text
+        candidates = (arr, obj)
+    for candidate in candidates:
+        try:
+            json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        return candidate
+    return candidates[0] or text
