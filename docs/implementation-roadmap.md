@@ -32,7 +32,7 @@ General rules:
 - [x] Step 2 — GitHub client module
 - [x] Step 3 — PR context builder
 - [x] Step 4 — First LLM review (no memory, no graph)
-- [ ] Step 5 — Re-review on every commit (still stateless)
+- [x] Step 5 — Re-review on every commit (still stateless)
 - [ ] Step 6 — Finding store (JSON memory)
 - [ ] Step 7 — Wire memory into the review flow
 - [ ] Step 8 — Incremental diff
@@ -183,7 +183,7 @@ Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 
 ---
 
-### [ ] Step 5 — Re-review on every commit (still stateless)
+### [x] Step 5 — Re-review on every commit (still stateless)
 
 **Goal:** `synchronize` events produce a fresh review — proves the repeat half of the loop works, even without memory.
 
@@ -196,6 +196,8 @@ Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 2. Confirm a new review runs and posts, and that the old comment isn't duplicated or deleted.
 
 **Done when:** Two bot comments exist on the PR, one per commit, each reflecting the diff at that point. (Yes, it re-reports fixed issues — that's the problem Step 7 solves.)
+
+**Verified (2026-10-25):** on PR #4 — each `synchronize` push (`3fbe67a` → `2e98f07` → `ba55883` → `6b8ddb0` → `baaf6b4`) produced its own new bot comment stamped with that head SHA, earlier comments untouched (the bot only calls `create_issue_comment`; two comments were deleted manually by the author, not the bot). Findings tracked the code — issues fixed in `ba55883` stopped being reported. Observed: a job re-run at the same SHA (`baaf6b4`) posts a second comment — handled by Step 7 task 6 / Step 8 `noop`.
 
 ---
 
