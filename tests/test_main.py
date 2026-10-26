@@ -1,6 +1,7 @@
 """Tests for the orchestrator entry point: arg parsing, wiring, rendering.
 
-GitHub and the LLM are replaced by stubs via monkeypatch on orchestrator.main.
+GitHub and the LLM are replaced by stubs via monkeypatch. Posting is stubbed
+at ``clients.github`` so the real ``save_memory`` still appends the state.
 """
 
 from types import SimpleNamespace
@@ -8,15 +9,18 @@ from types import SimpleNamespace
 import pytest
 from github import GithubException
 
+import clients.github as github_client
 import orchestrator.main as main_module
 from agents.reviewer_agents.parser import FindingParseError
 from models.pr_context import ContextSummary
 from models.review import ReviewResult
+from models.review_state import ReviewState
 from orchestrator.main import main, parse_args, render_comment
-from tests.helpers import make_context, make_finding
+from orchestrator.memory import StateTooLargeError, parse_state_block
+from tests.helpers import make_context, make_finding, make_review_state
 
 
-def must_not_post(pr, body):
+def must_not_post(pr, body, **kwargs):
     raise AssertionError("a failed review must not post a comment")
 
 
@@ -26,6 +30,7 @@ def stub_review(monkeypatch):
     posted = {}
     monkeypatch.setattr(main_module, "verify_connection", lambda: "owner/repo")
     monkeypatch.setattr(main_module, "resolve_model", lambda: ("google", "test-model"))
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: ReviewState())
     monkeypatch.setattr(main_module, "build_context", lambda pr: make_context())
     monkeypatch.setattr(
         main_module,
@@ -35,7 +40,9 @@ def stub_review(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        main_module, "post_review_comment", lambda pr, body: posted.update(pr=pr, body=body)
+        github_client,
+        "post_review_comment",
+        lambda pr, body, **kwargs: posted.update(pr=pr, body=body),
     )
     return posted
 
@@ -54,25 +61,21 @@ def test_main_posts_review_comment(stub_review) -> None:
     assert "F001 — Missing input validation" in stub_review["body"]
 
 
-def test_main_loads_memory_before_and_saves_after_posting(monkeypatch, stub_review) -> None:
-    calls = []
-    monkeypatch.setattr(main_module, "load_memory", lambda pr: calls.append("load") or [])
-    monkeypatch.setattr(
-        main_module, "post_review_comment", lambda pr, body: calls.append("post")
-    )
-    monkeypatch.setattr(
-        main_module, "save_memory", lambda pr, findings: calls.append(("save", pr, len(findings)))
-    )
+def test_main_posts_the_state_block_with_the_review(monkeypatch, stub_review) -> None:
+    # Saving is the post itself. Until Step 7 updates it, the loaded state is
+    # carried forward unchanged so the next run still finds it.
+    state = make_review_state()
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: state)
 
     assert main(["--pr", "42", "--event", "opened"]) == 0
-    assert calls == ["load", "post", ("save", 42, 1)]
+    assert parse_state_block(stub_review["body"]) == state
 
 
 def test_main_manual_dispatch_does_not_review(monkeypatch, stub_review) -> None:
     # --pr 0 is the workflow_dispatch smoke test: it checks the token and
     # pings the LLM, but never builds a context or posts a review.
     monkeypatch.setattr(main_module.llm, "get_llm", lambda: SimpleNamespace(invoke=lambda msg: "ok"))
-    monkeypatch.setattr(main_module, "post_review_comment", must_not_post)
+    monkeypatch.setattr(github_client, "post_review_comment", must_not_post)
 
     assert main(["--pr", "0", "--event", "push"]) == 0
 
@@ -93,7 +96,7 @@ def test_main_exits_1_on_config_error(monkeypatch, stub_review) -> None:
         raise RuntimeError("MODEL_PROVIDER is not set")
 
     monkeypatch.setattr(main_module, "resolve_model", raise_config_error)
-    monkeypatch.setattr(main_module, "post_review_comment", must_not_post)
+    monkeypatch.setattr(github_client, "post_review_comment", must_not_post)
 
     assert main(["--pr", "42", "--event", "opened"]) == 1
 
@@ -101,10 +104,10 @@ def test_main_exits_1_on_config_error(monkeypatch, stub_review) -> None:
 def test_main_exits_1_on_github_api_error(monkeypatch, stub_review) -> None:
     # PyGithub errors (forbidden, missing PR) take the logged failure path,
     # not an uncaught traceback.
-    def raise_github_error(pr, body):
+    def raise_github_error(pr, body, **kwargs):
         raise GithubException(403, {"message": "Forbidden"})
 
-    monkeypatch.setattr(main_module, "post_review_comment", raise_github_error)
+    monkeypatch.setattr(github_client, "post_review_comment", raise_github_error)
 
     assert main(["--pr", "42", "--event", "opened"]) == 1
 
@@ -117,7 +120,7 @@ def test_main_exits_1_on_unparseable_reviewer_output(monkeypatch, stub_review) -
     monkeypatch.setattr(
         main_module, "build_reviewer", lambda name: SimpleNamespace(review=raise_parse_error)
     )
-    monkeypatch.setattr(main_module, "post_review_comment", must_not_post)
+    monkeypatch.setattr(github_client, "post_review_comment", must_not_post)
 
     assert main(["--pr", "42", "--event", "opened"]) == 1
 
@@ -158,3 +161,15 @@ def test_render_comment_collapses_long_file_lists() -> None:
     body = render_comment(context, ReviewResult(overall_rating="approve"))
 
     assert "<summary>Files checked (12)</summary>" in body
+
+
+def test_main_exits_1_when_the_state_block_is_too_large(monkeypatch, stub_review) -> None:
+    # A review whose memory can't be saved must not be posted without it —
+    # the next run would lose every open finding and restart at F001.
+    def raise_too_large(pr):
+        raise StateTooLargeError("state block is 30000 chars")
+
+    monkeypatch.setattr(main_module, "save_memory", lambda pr, body, state: raise_too_large(pr))
+    monkeypatch.setattr(github_client, "post_review_comment", must_not_post)
+
+    assert main(["--pr", "42", "--event", "opened"]) == 1

@@ -124,6 +124,8 @@ def test_get_existing_review_comments_keeps_only_bot_comments(pr) -> None:
 
     assert [c["id"] for c in comments] == [501]
     assert comments[0]["created_at"] == "2026-10-20T09:30:00+00:00"
+    # load_memory trusts only state blocks from the bot's own login.
+    assert comments[0]["author"] == "github-actions[bot]"
 
 
 # --- writes ----------------------------------------------------------------
