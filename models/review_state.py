@@ -3,7 +3,7 @@
 Why it exists
     Every GitHub Actions run starts on a fresh runner, so nothing written to
     disk survives. Instead, the state rides inside the bot's own PR comment
-    as a hidden ``<!-- ai-review-state:v1 {json} -->`` block (design §6):
+    as a hidden ``<!-- ai-review-state:v1 {json} -->`` block (design section 6):
     invisible on the rendered page, returned verbatim by the API.
 
 How it is shaped
@@ -40,6 +40,17 @@ def finding_number(finding_id: str) -> int:
     return int(finding_id[1:])
 
 
+def format_finding_id(number: int) -> str:
+    """Return the finding ID for ``number``: ``7`` → ``"F007"``.
+
+    The inverse of ``finding_number``. Past 999 the ID simply grows a digit
+    (``F1000``), which ``_ID_PATTERN`` allows.
+    """
+    if number < 1:
+        raise ValueError(f"finding numbers start at 1, got {number}")
+    return f"F{number:03d}"
+
+
 class StoredFinding(BaseModel):
     """One finding as kept in the state block.
 
@@ -63,7 +74,7 @@ class StoredFinding(BaseModel):
     #: Stable ID (``F001``, ``F002``, …) that survives across commits.
     id: str = Field(pattern=_ID_PATTERN)
 
-    #: Lifecycle state (design §20). Never ``new`` — that status is
+    #: Lifecycle state (design section 20). Never ``new`` — that status is
     #: transient and becomes ``open`` once the finding is filed into memory.
     status: FindingStatus
 

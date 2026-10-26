@@ -33,7 +33,7 @@ General rules:
 - [x] Step 3 — PR context builder
 - [x] Step 4 — First LLM review (no memory, no graph)
 - [x] Step 5 — Re-review on every commit (still stateless)
-- [ ] Step 6 — Finding store (JSON memory)
+- [x] Step 6 — Finding store (JSON memory)
 - [ ] Step 7 — Wire memory into the review flow
 - [ ] Step 8 — Incremental diff
 - [ ] Step 9 — Finding re-check pass
@@ -203,7 +203,7 @@ Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 
 ## Phase C — Memory
 
-### [ ] Step 6 — Finding store (state in bot PR comments)
+### [x] Step 6 — Finding store (state in bot PR comments)
 
 **Goal:** Persist per-PR review state across workflow runs — which start on a fresh runner every time — by embedding it in each bot comment.
 
@@ -220,14 +220,16 @@ tests/test_memory.py
 ```
 
 **Tasks:**
-1. State model: `schema_version`, `reviewed_sha`, `base_ref`, `base_merge_sha` (merge-base with the target branch at review time), `next_id`, `file_shas` (`{filename: blob_sha}` from the PR files API), and `findings[id, status, rejected_by, severity, file, line, title, description (≤300 chars), snippet, thread_id (null until Step 9b's inline threads)]`. The orchestrator cuts `snippet` from the head file around `line` — the LLM is not trusted to copy it.
+1. State model: `schema_version`, `reviewed_sha`, `base_ref`, `base_merge_sha` (merge-base with the target branch at review time), `next_id`, `file_shas` (`{filename: blob_sha}` from the PR files API), and `findings[id, status, rejected_by, severity, file, line, title, description (≤300 chars), snippet, thread_id (null until Step 9b's inline threads)]`. The orchestrator cuts `snippet` from the head file around `line` — the LLM is not trusted to copy it. Step 6 provides the pure cutter `cut_snippet(file_text, line, context=3)` in `memory.py` (`line ± 3`, clamped at file ends, `""` past EOF, CRLF normalised to LF); Step 7 task 1 is the first caller.
 2. `render_state_block(state)` → `<!-- ai-review-state:v1 {json} -->` appended to the comment body. After `json.dumps`, escape `<`/`>` as `<`/`>` (still valid JSON) so a snippet containing `-->` cannot close the HTML comment early. Cap the block at ~20k chars (comment bodies max out at 65,536), dropping the oldest `closed`/`rejected` findings first.
 3. `load_memory(pr_number)` scans issue comments newest-first and returns the first one that (a) is authored by the configured bot login (default `github-actions[bot]`), (b) contains `MARKER`, and (c) has a state block that passes pydantic validation. A corrupt newest block falls back to an older valid one (so IDs don't restart at F001); none found → empty state (= full review). Treat the parsed state as untrusted.
 4. `save_memory` is not a separate write: state is saved only by a successful `post_review_comment` that carries the block.
 5. Finding lifecycle as an explicit allowed-moves table (design §20): `new→open`, `open→resolved|rejected`, `resolved→reopened|verified`, `reopened→resolved|rejected`, `verified→closed`; illegal transition raises. `rejected_by: critic | developer` records who rejected it.
 6. Finding ID generator (`F001`, `F002`, …) continuing from `next_id`.
 
-**Done when:** Unit tests cover round-trip through a rendered comment body, a snippet containing `-->` surviving, another `github-actions[bot]` comment without a state block being skipped, a corrupt newest block falling back to an older one, all legal transitions, rejection of illegal ones, and ID continuation. No LLM or real GitHub involved.
+**Done when:** Unit tests cover round-trip through a rendered comment body, a snippet containing `-->` surviving, another `github-actions[bot]` comment without a state block being skipped, a corrupt newest block falling back to an older one, all legal transitions, rejection of illegal ones, ID continuation, and `cut_snippet` (window, clamping at file ends, line past EOF, CRLF). No LLM or real GitHub involved.
+
+**Verified (2026-10-26):** `uv run pytest` — 206 passed (`test_memory.py`, `test_review_state.py`, `test_lifecycle.py`, `test_finding_ids.py`, `test_snippet.py` cover every item above). State is loaded and carried forward unchanged in `run_review`; filling it (new findings, snippets, SHAs) is Step 7.
 
 ---
 
@@ -242,14 +244,14 @@ tests/test_memory.py
 ```text
 agents/reviewer_agents/prompts/logic-reviewer.md   # gains a "previous findings" section
 ```
-(Plus edits in `main.py` / `memory.py` — no new modules.)
+(Plus edits in `main.py` / `memory.py` / `clients/github.py` — no new modules.)
 
 **Tasks:**
-1. Main flow: `load_memory` → include previous findings in the reviewer prompt → new findings appended (`new→open`) → state block written into the posted comment.
+1. Main flow: `load_memory` → include previous findings in the reviewer prompt → new findings appended (`new→open`) → state block written into the posted comment. When filing a new finding, fill its `snippet` with `cut_snippet` (Step 6) on the head file, fetched by a new client fn `get_file_content(path, ref=head_sha)` — once per file with findings, not per changed file. This must ship with Step 7: findings saved with an empty snippet can never be re-checked properly by Step 9.
 2. Reviewer prompt gains a "previous findings" section with instruction: re-check each against the new diff, and do not re-report an issue already listed.
 3. Dedupe reviewer output against stored findings (same file + matching snippet or title) before assigning new IDs — otherwise every full-diff fallback re-reports old issues under new IDs.
 4. Comment rendering shows two sections: "Previous findings" and "New findings" (design §14 output shape).
-5. `reviewed_sha` / `base_merge_sha` / `file_shas` updated in the state after each successful post. `reopened` events take the same stateful path as `synchronize` (comments survive while the PR is closed; the head may have moved).
+5. `reviewed_sha` / `base_merge_sha` / `file_shas` updated in the state after each successful post. `file_shas` needs `get_pr_files` to also return each file's blob `sha` (it currently doesn't). `reopened` events take the same stateful path as `synchronize` (comments survive while the PR is closed; the head may have moved).
 6. Skip posting when `head_sha == reviewed_sha`, or when no status changed and there are no new findings (design §22) — `reviewed_sha` then stays put and the next run's range covers it.
 
 **Done when:** On the test PR: commit 1 posts F001; developer fixes it and pushes; commit 2's comment lists F001 with a status (resolved or still-open — correctness of *which* comes later in Step 9), and the hidden state block in commit 2's comment matches its visible content.
@@ -301,7 +303,7 @@ tests/test_recheck.py
 
 **Tasks:**
 1. Skip check (works in every diff mode): compare each finding's file blob SHA against `state.file_shas`. Unchanged → status kept, no LLM call. File deleted → `resolved` ("code removed"). Follow `previous_filename` for renames.
-2. Dedicated re-check agent call for open, reopened **and resolved** findings whose file changed (resolved ones are needed to catch regressions): given the finding + stored snippet + current head file content (new client fn `get_file_content(path, ref)`) + incremental diff, output `resolved | still_open | reopened` + one-line justification. `still_open` is a verdict, not a status — the finding keeps its current status. The re-check never outputs a dismissal.
+2. Dedicated re-check agent call for open, reopened **and resolved** findings whose file changed (resolved ones are needed to catch regressions): given the finding + stored snippet + current head file content (`get_file_content(path, ref)`, added in Step 7) + incremental diff, output `resolved | still_open | reopened` + one-line justification. Lines above a finding may have been added or removed, so locate the stored snippet near the old `line` rather than cutting at exactly that line. `still_open` is a verdict, not a status — the finding keeps its current status. The re-check never outputs a dismissal.
 3. Apply transitions through the Step 6 lifecycle table; a finding whose problem reappears goes `resolved → reopened`.
 4. Developer explanations: read human issue comments created after the last valid state comment that mention a finding ID (`F\d{3}`). Accept only from the PR author or `author_association` OWNER / MEMBER / COLLABORATOR; pass the text to the LLM as untrusted data. A justification the LLM accepts → `rejected` with `rejected_by=developer`, acknowledged in the next comment.
 5. Comment format from design §14: previous findings with ✅/🟡 markers, then new findings.
