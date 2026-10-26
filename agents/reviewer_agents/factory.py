@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from agents.llm import get_llm
 from agents.reviewer_agents.parser import FindingParseError, parse_review
@@ -35,8 +35,16 @@ class Reviewer:
     system_prompt: str
     llm: BaseChatModel
 
-    def review_pr(self, context: PRContext) -> AIMessage:
-        """One review turn: system prompt + rendered PR context. Stateless."""
+    def review(self, context: PRContext) -> ReviewResult:
+        """Review a PR and return the verdict: overall rating + findings.
+
+        The schema is enforced by the provider via ``with_structured_output``
+        (json_schema for OpenAI/Google, a forced tool call for Anthropic).
+        When that yields nothing usable, the raw reply goes through
+        ``parse_review``'s text repair. If both fail, retries once with the
+        error fed back; a second failure raises ``FindingParseError`` — a
+        fatal review error, reported to the user as a failed run.
+        """
         user_message = render_pr_context(context)
         # DEBUG preview of what we actually send: length + head. The tail is
         # just more diff, so truncating keeps the log useful without dumping
@@ -46,21 +54,39 @@ class Reviewer:
             len(user_message),
             user_message[:1500],
         )
-        return self.llm.invoke(
-            [
-                SystemMessage(self.system_prompt),
-                HumanMessage(user_message),
+        messages = [SystemMessage(self.system_prompt), HumanMessage(user_message)]
+        result, error = self._invoke(messages)
+        if result is not None:
+            return result
+        logger.warning(
+            "Reviewer %s produced unparseable output (%s) — retrying once",
+            self.name,
+            error,
+        )
+        # The bad reply is described, not replayed as an assistant turn: an
+        # Anthropic tool_use reply must be followed by a tool_result, so
+        # replaying it would turn a parse failure into an API error.
+        result, error = self._invoke(
+            messages
+            + [
+                HumanMessage(
+                    f"Your previous reply could not be parsed as a JSON object "
+                    f"with an overall_rating and a findings array: {error}. "
+                    f"Respond again with ONLY the JSON object, no prose and "
+                    f"no code fences."
+                )
             ]
         )
+        if result is None:
+            raise FindingParseError(error)
+        return result
 
-    def review(self, context: PRContext) -> ReviewResult:
-        """Review a PR and return the verdict: overall rating + findings.
-
-        On malformed output, retries once with the parse error fed back to
-        the model; a second failure raises ``FindingParseError`` — a
-        fatal review error, reported to the user as a failed run.
-        """
-        reply = self.review_pr(context)
+    def _invoke(self, messages: list[BaseMessage]) -> tuple[ReviewResult | None, str]:
+        """One structured LLM call. Returns ``(result, "")`` or ``(None, error)``."""
+        output = self.llm.with_structured_output(ReviewResult, include_raw=True).invoke(
+            messages
+        )
+        reply = output["raw"]
         # Token counts are the receipt that the context actually reached the
         # model: input_tokens should scale with the diff size (roughly
         # chars/4). A few hundred input tokens means the context was dropped
@@ -72,28 +98,16 @@ class Reviewer:
                 usage.get("input_tokens"),
                 usage.get("output_tokens"),
             )
+        if output["parsed"] is not None:
+            return output["parsed"], ""
+        # No schema-valid output (e.g. the model answered in text instead of
+        # the tool call, or fenced its JSON): fall back to text repair.
         try:
-            return parse_review(reply.content)
+            return parse_review(reply.content), ""
         except FindingParseError as exc:
-            logger.warning(
-                "Reviewer %s produced unparseable output (%s) — retrying once",
-                self.name,
-                exc,
-            )
-            retry_reply = self.llm.invoke(
-                [
-                    SystemMessage(self.system_prompt),
-                    HumanMessage(render_pr_context(context)),
-                    reply,
-                    HumanMessage(
-                        f"Your reply could not be parsed as a JSON object with "
-                        f"an overall_rating and a findings array: {exc}. "
-                        f"Respond again with ONLY the JSON object, no prose "
-                        f"and no code fences."
-                    ),
-                ]
-            )
-            return parse_review(retry_reply.content)
+            # The structured parser's error is the more specific one when the
+            # model did attempt the schema (e.g. a field failed validation).
+            return None, str(output["parsing_error"] or exc)
 
 
 def build_reviewer(name: str) -> Reviewer:
