@@ -135,6 +135,7 @@ def run_review(pr_number: int) -> ReviewResult:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logger.info("Starting review for PR #%s (event: %s)", args.pr, args.event)
+    return 1
     try:
         repo_full_name = verify_connection()
         logger.info("GitHub token OK for repo: %s", repo_full_name)
