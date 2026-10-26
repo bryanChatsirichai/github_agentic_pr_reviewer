@@ -155,8 +155,10 @@ def get_existing_review_comments(
 ) -> list[dict[str, Any]]:
     """Return prior PR-conversation comments authored by our bot.
 
-    A comment counts as ours if its body contains the ``MARKER`` line. Each
-    entry is ``{"id": int, "body": str, "created_at": ISO-8601 str}``.
+    A comment counts as ours if its body contains the ``MARKER`` line, oldest
+    first. Each entry is ``{"id": int, "body": str, "created_at": ISO-8601
+    str, "author": login or None}``. Anyone can type the marker, so callers
+    that trust the content (``load_memory``) must also check ``author``.
     """
     pr = (repo or _get_repo(client)).get_pull(pr_number)
     comments: list[dict[str, Any]] = []
@@ -167,6 +169,8 @@ def get_existing_review_comments(
                     "id": comment.id,
                     "body": comment.body,
                     "created_at": comment.created_at.isoformat(),
+                    # None when the author's account was deleted.
+                    "author": comment.user.login if comment.user else None,
                 }
             )
     logger.debug("Found %d prior bot comment(s) on PR #%s", len(comments), pr_number)

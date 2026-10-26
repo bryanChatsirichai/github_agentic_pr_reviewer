@@ -1,7 +1,8 @@
 """Entry point for the agentic PR reviewer.
 
-Pipeline: build PR context → run the logic reviewer → render findings into
-a ``🤖 AI Review`` comment → post it. Run as a module from the repo root:
+Pipeline: load memory → build PR context → run the logic reviewer → render
+findings into a ``🤖 AI Review`` comment → post it with the hidden state
+block (``save_memory``). Run as a module from the repo root:
 ``python -m orchestrator.main``.
 """
 
@@ -16,11 +17,11 @@ from agents import llm
 from agents.llm import resolve_model
 from agents.reviewer_agents.factory import build_reviewer
 from agents.reviewer_agents.parser import FindingParseError
-from clients.github import post_review_comment, verify_connection
+from clients.github import verify_connection
 from models.pr_context import PRContext
 from models.review import ReviewResult
 from orchestrator.context_builder import build_context
-from orchestrator.memory import load_memory, save_memory
+from orchestrator.memory import StateTooLargeError, load_memory, save_memory
 
 load_dotenv()
 
@@ -110,10 +111,10 @@ def run_review(pr_number: int) -> ReviewResult:
     provider, model = resolve_model()
     logger.info("Using LLM provider=%s model=%s", provider, model)
 
-    # Memory is a no-op stub until Step 6; loading it here keeps the flow
-    # shape final. Step 7 feeds these findings into the reviewer prompt.
-    previous_findings = load_memory(pr_number)
-    logger.info("Loaded %d previous finding(s) from memory", len(previous_findings))
+    # State from the bot's last review comment (empty → full review). Not
+    # used yet: Step 7 feeds its findings into the reviewer prompt.
+    state = load_memory(pr_number)
+    logger.info("Loaded %d previous finding(s) from memory", len(state.findings))
 
     context = build_context(pr_number)
     reviewer = build_reviewer("logic-reviewer")
@@ -124,10 +125,10 @@ def run_review(pr_number: int) -> ReviewResult:
         result.overall_rating,
     )
 
-    post_review_comment(pr_number, render_comment(context, result))
-    # Save only after a successful post: a failed post must not record
-    # findings the developer never saw.
-    save_memory(pr_number, result.findings)
+    # Posting is saving: the comment carries the state block, so a failed
+    # post records nothing. Step 7 updates the state (new findings, SHAs)
+    # before this; until then it is carried forward unchanged.
+    save_memory(pr_number, render_comment(context, result), state)
     return result
 
 
@@ -146,10 +147,16 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("Manual dispatch (--pr 0): no PR to review, done.")
             return 0
         run_review(args.pr)
-    except (RuntimeError, GithubException, FindingParseError) as exc:
+    except (
+        RuntimeError,
+        GithubException,
+        FindingParseError,
+        StateTooLargeError,
+    ) as exc:
         # RuntimeError = env/config (token, provider, repo); GithubException
         # = GitHub API failure (forbidden, missing PR/repo); FindingParseError
-        # = the reviewer produced unparseable output twice. All fail the run
+        # = the reviewer produced unparseable output twice; StateTooLargeError
+        # = too many open findings to fit the state block. All fail the run
         # loudly — an empty or missing comment must never look like a clean
         # review.
         logger.error("Review failed: %s", exc)
