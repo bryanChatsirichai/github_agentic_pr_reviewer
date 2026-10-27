@@ -2,7 +2,7 @@
 
 Provider choice for the agentic PR reviewer. LangChain/LangGraph are provider-agnostic —
 the model is a config string (`init_chat_model("provider:model")`), so this decision is
-fully reversible at any time. See design §1251 and §1850–1854.
+fully reversible at any time. See design section 26 (technology stack) and section 29 (open questions: models).
 
 ## Options (prices per 1M tokens, as of Oct 2026 — verify before committing)
 
@@ -21,7 +21,7 @@ fully reversible at any time. See design §1251 and §1850–1854.
 - **Development:** `google_genai:gemini-3.5-flash-lite` on the free tier — fast (~5s/call), follows format instructions, ~500 req/day covers the whole PoC at $0. Verified too slow on 3.8-flash free tier: 50s–2min/call (thinking) and it ignored the sanity-check prompt.
 - **Demos / paid tier:** `openai:gpt-5.6-luna` ($0.03–0.10 per PR review) — cheapest solid option.
 - **If loops get flaky** (malformed JSON, misfired tool calls): climb one rung to `claude-haiku-4.5`.
-- **Future quality tier** for the reviewer/judge split (design §1854): Gemini Flash for the cheap
+- **Future quality tier** for the reviewer/judge split (design section 29): Gemini Flash for the cheap
   first pass + GPT or Claude for judging — the split works across providers, not just models.
 
 ## Gateway option: OpenCode Zen (evaluated Oct 2026, not wired up)

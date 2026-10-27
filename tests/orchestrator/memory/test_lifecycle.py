@@ -1,4 +1,4 @@
-"""Tests for the finding lifecycle table in orchestrator.memory (design section 20).
+"""Tests for the finding lifecycle table in orchestrator.memory (design section 11).
 
 The legal moves are listed here by hand, not read from ``ALLOWED_TRANSITIONS``,
 so a typo in the table fails a test instead of silently changing the rules.

@@ -1,7 +1,7 @@
 """Per-PR review memory, embedded in the bot's own PR comments.
 
 Every Actions run starts on a fresh runner, so the ``ReviewState`` rides
-inside each posted review comment as a hidden HTML comment (design section 6)::
+inside each posted review comment as a hidden HTML comment (design section 10)::
 
     🤖 AI Review
     ...visible findings...
@@ -293,7 +293,7 @@ def _status_counts(findings: list[StoredFinding]) -> str:
     return " ".join(f"{s.value}={counts[s]}" for s in FindingStatus if counts[s])
 
 
-# --- Finding lifecycle (design section 20) -------------------------------
+# --- Finding lifecycle (design section 11) -------------------------------
 
 #: Every legal status move; anything else raises. ``rejected`` and
 #: ``closed`` are terminal. ``new`` only ever leaves for ``open`` — that

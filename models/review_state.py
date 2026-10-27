@@ -3,7 +3,7 @@
 Why it exists
     Every GitHub Actions run starts on a fresh runner, so nothing written to
     disk survives. Instead, the state rides inside the bot's own PR comment
-    as a hidden ``<!-- ai-review-state:v1 {json} -->`` block (design section 6):
+    as a hidden ``<!-- ai-review-state:v1 {json} -->`` block (design section 10):
     invisible on the rendered page, returned verbatim by the API.
 
 How it is shaped
@@ -87,7 +87,7 @@ class StoredFinding(BaseModel):
     #: Stable ID (``F001``, ``F002``, …) that survives across commits.
     id: str = Field(pattern=_ID_PATTERN)
 
-    #: Lifecycle state (design section 20). Never ``new`` — that status is
+    #: Lifecycle state (design section 11). Never ``new`` — that status is
     #: transient and becomes ``open`` once the finding is filed into memory.
     status: FindingStatus
 
