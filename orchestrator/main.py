@@ -148,8 +148,12 @@ def _files_section(files: list[str], inline_limit: int = 10) -> str:
     return f"<details>\n<summary>Files checked ({len(files)})</summary>\n\n{listed}\n\n</details>"
 
 
-def run_review(pr_number: int) -> ReviewResult:
-    """Full review pass for one PR: context → reviewer → comment on GitHub."""
+def run_review(pr_number: int) -> ReviewResult | None:
+    """Full review pass for one PR: context → reviewer → comment on GitHub.
+
+    Returns None, posting nothing, when the head commit was already
+    reviewed.
+    """
     # Config errors (missing provider/key) raise RuntimeError here, before
     # any GitHub write — fail fast rather than half way through a review.
     provider, model = resolve_model()
@@ -163,6 +167,16 @@ def run_review(pr_number: int) -> ReviewResult:
     context = build_context(pr_number).model_copy(
         update={"previous_findings": state.findings}
     )
+
+    # Same commit as the last posted review (e.g. "Re-run job"): nothing
+    # new to say, so stop before the LLM call and post nothing.
+    if context.head_sha == state.reviewed_sha:
+        logger.info(
+            "Head %s was already reviewed — skipping, nothing posted",
+            context.head_sha[:10],
+        )
+        return None
+
     reviewer = build_reviewer("logic-reviewer")
     result = reviewer.review(context)
     logger.info(
