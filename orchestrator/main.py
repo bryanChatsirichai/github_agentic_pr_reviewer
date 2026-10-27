@@ -20,6 +20,7 @@ from agents.reviewer_agents.parser import FindingParseError
 from clients.github import get_file_content, verify_connection
 from models.pr_context import PRContext
 from models.review import ReviewResult
+from models.review_state import KNOWN_ISSUE_STATUSES, StoredFinding
 from orchestrator.context_builder import build_context
 from orchestrator.memory import (
     StateTooLargeError,
@@ -73,6 +74,12 @@ def render_comment(context: PRContext, result: ReviewResult) -> str:
     agent — known facts must not be restated by a model that could
     misremember them. The overall rating is the agent's judgment. The
     MARKER line is prepended by ``post_review_comment``.
+
+    With previous findings (``context.previous_findings`` in a
+    ``KNOWN_ISSUE_STATUSES`` status) the body has two sections: those
+    findings one line each, then this run's new ones in full — so an issue
+    that was deduped away still shows, and "No issues found" is never
+    claimed while one is open. Without them, only the new findings.
     """
     files = context.summary.file_list
     lines = [
@@ -86,10 +93,28 @@ def render_comment(context: PRContext, result: ReviewResult) -> str:
         "",
     ]
     findings = result.findings
-    if not findings:
+    previous = [
+        f for f in context.previous_findings if f.status in KNOWN_ISSUE_STATUSES
+    ]
+    if previous:
+        # Earlier reviews: old issues as one line each (the developer has
+        # read the details), then this run's issues in full.
+        lines += [
+            f"**Previous findings ({len(previous)}):**",
+            "",
+            _previous_section(previous),
+            "",
+            f"**New findings ({len(findings)}):**",
+            "",
+        ]
+        if not findings:
+            lines += ["No new issues found."]
+            return "\n".join(lines).rstrip()
+    elif not findings:
         lines += ["No issues found. 🎉"]
         return "\n".join(lines).rstrip()
-    lines += [f"Found {len(findings)} issue(s):", ""]
+    else:
+        lines += [f"Found {len(findings)} issue(s):", ""]
     for f in findings:
         lines += [
             f"### {f.id} — {f.title}",
@@ -100,6 +125,19 @@ def render_comment(context: PRContext, result: ReviewResult) -> str:
             "",
         ]
     return "\n".join(lines).rstrip()
+
+
+def _previous_section(findings: list[StoredFinding], inline_limit: int = 10) -> str:
+    """One line per previous finding, collapsed once the list gets long."""
+    listed = "\n".join(
+        # Whitespace collapsed: the title comes from an editable comment.
+        f"- **{f.id}** — {' '.join(f.title.split())} · `{f.file}:{f.line}` · "
+        + (f"{f.status} ({f.rejected_by})" if f.rejected_by else f"{f.status}")
+        for f in findings
+    )
+    if len(findings) <= inline_limit:
+        return listed
+    return f"<details>\n<summary>Show all {len(findings)}</summary>\n\n{listed}\n\n</details>"
 
 
 def _files_section(files: list[str], inline_limit: int = 10) -> str:
