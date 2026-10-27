@@ -109,7 +109,7 @@ tests/                 # empty pytest package (baseline)
 
 ```text
 clients/github.py         # (originally orchestrator/github_client.py — moved in the Step 3 refactor)
-tests/test_github_client.py
+tests/clients/test_github_client.py   # (originally tests/test_github_client.py — moved in Step 7)
 tests/fixtures/            # one real-shaped PR fixture JSON
 ```
 Also adds `pygithub` via `uv add pygithub`.
@@ -139,7 +139,7 @@ Note: this module is **orchestrator plumbing, not agent tools**. The pipeline ca
 ```text
 orchestrator/context_builder.py  # build_context — combines client data into PRContext
 models/pr_context.py       # PRContext: pr number, SHAs, diff, changed files, prev findings
-tests/test_context_builder.py
+tests/orchestrator/test_context_builder.py   # (originally tests/ — moved in Step 7)
 ```
 
 **Tasks:**
@@ -216,7 +216,7 @@ Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 ```text
 orchestrator/memory.py     # load_memory / save_memory (replaces the Step 4 stub)
 models/review_state.py     # ReviewState pydantic model
-tests/test_memory.py
+tests/orchestrator/memory/test_memory.py   # (originally tests/ — moved in Step 7)
 ```
 
 **Tasks:**
@@ -276,7 +276,7 @@ agents/reviewer_agents/prompts/logic-reviewer.md   # gains a "previous findings"
 
 ```text
 orchestrator/diff.py
-tests/test_diff.py
+tests/orchestrator/test_diff.py
 ```
 
 **Tasks:**
@@ -304,7 +304,7 @@ tests/test_diff.py
 ```text
 agents/reviewer_agents/prompts/recheck.md
 orchestrator/recheck.py
-tests/test_recheck.py
+tests/orchestrator/test_recheck.py
 ```
 
 **Tasks:**

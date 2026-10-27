@@ -16,6 +16,7 @@
   "files": [
     {
       "filename": "src/cli.py",
+      "sha": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
       "status": "modified",
       "additions": 5,
       "deletions": 1,
@@ -24,6 +25,7 @@
     },
     {
       "filename": "src/fibonacci.py",
+      "sha": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
       "status": "added",
       "additions": 11,
       "deletions": 0,
@@ -32,6 +34,7 @@
     },
     {
       "filename": "assets/logo.png",
+      "sha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
       "status": "added",
       "additions": 0,
       "deletions": 0,

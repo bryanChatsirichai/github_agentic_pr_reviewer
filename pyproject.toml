@@ -20,3 +20,7 @@ dependencies = [
 # No __init__.py anywhere — packages are PEP 420 namespace packages. pytest's
 # rootdir-relative import then can't see them, so put the repo root on sys.path.
 pythonpath = ["."]
+# Tests mirror the source tree (tests/orchestrator/memory/…). importlib mode
+# imports each test file by its path, without adding its folder to sys.path,
+# so two folders may one day hold test files with the same name.
+addopts = "--import-mode=importlib"
