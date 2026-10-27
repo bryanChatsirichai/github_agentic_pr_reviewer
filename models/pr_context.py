@@ -41,8 +41,8 @@ class PRContext(BaseModel):
     head_sha: str
     #: Unified diff for the whole PR (see ``clients.github.get_pr_diff``).
     diff: str
-    #: Raw entries from ``clients.github.get_pr_files`` (filename, status,
-    #: additions, deletions, previous_filename, patch).
+    #: Raw entries from ``clients.github.get_pr_files`` (filename, sha,
+    #: status, additions, deletions, previous_filename, patch).
     changed_files: list[dict[str, Any]]
     #: Prior bot comments (see ``clients.github.MARKER``), oldest first, as
     #: returned by ``get_existing_review_comments``.

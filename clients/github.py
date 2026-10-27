@@ -34,6 +34,7 @@ __all__ = [
     "get_pr_files",
     "get_pr_diff",
     "get_file_content",
+    "get_merge_base_sha",
     "get_existing_review_comments",
     "post_review_comment",
 ]
@@ -110,8 +111,10 @@ def get_pr_files(
 ) -> list[dict[str, Any]]:
     """Return the files changed in PR ``pr_number``.
 
-    Each entry has: filename, status (added / removed / modified / renamed /
-    ...), additions, deletions, previous_filename (None unless renamed), and
+    Each entry has: filename, ``sha`` (the file's blob SHA at the head —
+    unchanged content keeps the same SHA, which Step 9 uses to skip
+    re-checks), status (added / removed / modified / renamed / ...),
+    additions, deletions, previous_filename (None unless renamed), and
     ``patch`` — the hunk-level diff blob with context, or None for binary or
     oversized files.
     """
@@ -121,6 +124,7 @@ def get_pr_files(
         files.append(
             {
                 "filename": f.filename,
+                "sha": f.sha,
                 "status": f.status,
                 "additions": f.additions,
                 "deletions": f.deletions,
@@ -146,6 +150,24 @@ def get_pr_diff(
     """
     files = get_pr_files(pr_number, repo=repo, client=client)
     return "".join(_diff_section(f) for f in files)
+
+
+def get_merge_base_sha(
+    base_ref: str,
+    head_sha: str,
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> str:
+    """Return the merge-base of branch ``base_ref`` and commit ``head_sha``.
+
+    That is the commit the PR branch split off from (or last merged in)
+    the target branch. Unlike ``pr.base.sha`` — a snapshot from when the PR
+    was opened or retargeted — it moves when the base is merged into the
+    PR, which is how Step 8 detects that an incremental diff is unsafe.
+    """
+    comparison = (repo or _get_repo(client)).compare(base_ref, head_sha)
+    return comparison.merge_base_commit.sha
 
 
 def get_file_content(

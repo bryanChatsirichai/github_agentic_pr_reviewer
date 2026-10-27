@@ -17,7 +17,7 @@ from agents import llm
 from agents.llm import resolve_model
 from agents.reviewer_agents.factory import build_reviewer
 from agents.reviewer_agents.parser import FindingParseError
-from clients.github import get_file_content, verify_connection
+from clients.github import get_file_content, get_merge_base_sha, verify_connection
 from models.pr_context import PRContext
 from models.review import ReviewResult
 from models.review_state import KNOWN_ISSUE_STATUSES, StoredFinding
@@ -197,8 +197,24 @@ def run_review(pr_number: int) -> ReviewResult:
         }
     )
 
+    # Record which code this review covers; Step 8 diffs from here and
+    # Step 9 skips files whose blob is unchanged. A file without a blob SHA
+    # (if GitHub ever sends none) is left out rather than failing the run.
+    state = state.model_copy(
+        update={
+            "reviewed_sha": context.head_sha,
+            "base_ref": context.base_branch,
+            "base_merge_sha": get_merge_base_sha(
+                context.base_branch, context.head_sha
+            ),
+            "file_shas": {
+                f["filename"]: f["sha"] for f in context.changed_files if f.get("sha")
+            },
+        }
+    )
+
     # Posting is saving: the comment carries the state block, so a failed
-    # post records nothing. The SHAs are updated in Step 7 Task 5.
+    # post records nothing — the next run then starts from the old SHAs.
     save_memory(pr_number, render_comment(context, result), state)
     return result
 
