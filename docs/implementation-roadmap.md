@@ -244,17 +244,23 @@ tests/test_memory.py
 ```text
 agents/reviewer_agents/prompts/logic-reviewer.md   # gains a "previous findings" section
 ```
-(Plus edits in `main.py` / `memory.py` / `clients/github.py` — no new modules.)
+(Plus edits in `main.py` / `memory.py` / `clients/github.py` and their tests — no new modules. Client changes: new `get_file_content`, new `get_merge_base_sha`, and `get_pr_files` gains a `sha` field per file.)
 
 **Tasks:**
 1. Main flow: `load_memory` → include previous findings in the reviewer prompt → new findings appended (`new→open`) → state block written into the posted comment. When filing a new finding, fill its `snippet` with `cut_snippet` (Step 6) on the head file, fetched by a new client fn `get_file_content(path, ref=head_sha)` — once per file with findings, not per changed file. This must ship with Step 7: findings saved with an empty snippet can never be re-checked properly by Step 9.
-2. Reviewer prompt gains a "previous findings" section with instruction: re-check each against the new diff, and do not re-report an issue already listed.
-3. Dedupe reviewer output against stored findings (same file + matching snippet or title) before assigning new IDs — otherwise every full-diff fallback re-reports old issues under new IDs.
+2. Reviewer prompt gains a "previous findings" section (ID, file, line, title, status) with instruction: do not re-report an issue already listed. The reviewer does **not** output status verdicts for previous findings — that is Step 9's dedicated re-check. In Step 7 previous findings are carried forward with their stored status.
+3. Dedupe reviewer output against stored findings before assigning new IDs — otherwise every full-diff fallback re-reports old issues under new IDs. A reviewer finding is a duplicate of a stored one when it is in the same file and either (a) the normalised titles are equal (lowercase, punctuation stripped, whitespace collapsed), or (b) the line is within ±3 of the stored line **and** the titles are similar (`difflib.SequenceMatcher` ratio ≥ 0.6). Snippets are not compared: the snippet is cut around whatever line the LLM reports, so a 2-line drift breaks an exact match. Line proximity alone is not enough either — two different issues on adjacent lines must not merge, since hiding a real finding is worse than a duplicate. Rewordings at a drifted line will still slip through; accept that for the prototype (Step 14's merge revisits dedupe).
 4. Comment rendering shows two sections: "Previous findings" and "New findings" (design §14 output shape).
-5. `reviewed_sha` / `base_merge_sha` / `file_shas` updated in the state after each successful post. `file_shas` needs `get_pr_files` to also return each file's blob `sha` (it currently doesn't). `reopened` events take the same stateful path as `synchronize` (comments survive while the PR is closed; the head may have moved).
-6. Skip posting when `head_sha == reviewed_sha`, or when no status changed and there are no new findings (design §22) — `reviewed_sha` then stays put and the next run's range covers it.
+5. `reviewed_sha` / `base_merge_sha` / `file_shas` updated in the state after each successful post. Two client changes:
+   - `get_pr_files` returns each file's blob `sha` (it currently doesn't) → `file_shas`.
+   - New `get_merge_base_sha(base_ref, head_sha)` → `repo.compare(base_ref, head_sha).merge_base_commit.sha` → `base_merge_sha`. (Step 8 reuses the same compare call for its decision rule.)
 
-**Done when:** On the test PR: commit 1 posts F001; developer fixes it and pushes; commit 2's comment lists F001 with a status (resolved or still-open — correctness of *which* comes later in Step 9), and the hidden state block in commit 2's comment matches its visible content.
+   `reopened` events take the same stateful path as `synchronize` (comments survive while the PR is closed; the head may have moved).
+6. Skip posting when `head_sha == reviewed_sha` (job re-run at the same SHA) — log it and exit 0 without posting. This is the **only** skip rule in Step 7. The design §22 rule "no status changed and no new findings → don't post" moves to Step 9: without a re-check pass no status can change, so applying it here would suppress every follow-up comment that has no new findings (including the one the Done-when check below needs).
+
+**Done when:**
+- Unit tests (mocked client, no LLM): `get_file_content`, `get_merge_base_sha`, and the `sha` field in `get_pr_files`; dedupe — exact-title match, near-line similar-title match, adjacent-line different-title *not* merged, different-file *not* merged; new findings get continuing IDs and a non-empty snippet; same-SHA run posts nothing; state SHAs updated after a post.
+- On the test PR: commit 1 posts F001; developer fixes it and pushes; commit 2's comment lists F001 under "Previous findings" with its stored status (`open` — status updates are Step 9) and F001 is not re-filed under a new ID; the hidden state block in commit 2's comment matches its visible content, with `reviewed_sha` = commit 2's SHA.
 
 ---
 
@@ -307,7 +313,7 @@ tests/test_recheck.py
 3. Apply transitions through the Step 6 lifecycle table; a finding whose problem reappears goes `resolved → reopened`.
 4. Developer explanations: read human issue comments created after the last valid state comment that mention a finding ID (`F\d{3}`). Accept only from the PR author or `author_association` OWNER / MEMBER / COLLABORATOR; pass the text to the LLM as untrusted data. A justification the LLM accepts → `rejected` with `rejected_by=developer`, acknowledged in the next comment.
 5. Comment format from design §14: previous findings with ✅/🟡 markers, then new findings.
-6. Comment strategy: post a new summary comment only when something changed (Step 7 task 6). Inline review threads come in Step 9b; state storage and re-check logic don't change for them.
+6. Comment strategy (design §22, moved here from Step 7 because only now can statuses change): skip posting when no status changed and there are no new findings — `reviewed_sha` then stays put and the next run's range covers it. Otherwise post a new summary comment. This is in addition to Step 7's same-SHA skip and Step 8's `noop`. Inline review threads come in Step 9b; state storage and re-check logic don't change for them.
 
 **Done when:** Full scenario test on a real PR: commit 1 plants F001 → commit 2 fixes it (F001 → resolved in state + comment) → commit 3 reintroduces it (F001 → reopened). Plus: a collaborator's "F00x: intentional because …" reply leads to `rejected (developer)`; the same reply from a non-collaborator is ignored. This is design §21 proven end-to-end.
 

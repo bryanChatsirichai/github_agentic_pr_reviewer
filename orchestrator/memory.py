@@ -20,7 +20,11 @@ Status (Step 6):
 - ``ALLOWED_TRANSITIONS`` / ``transition`` — done (Task 5).
 - ``allocate_ids`` — done (Task 6).
 - ``cut_snippet`` — done (Task 1): the orchestrator-side snippet cutter.
-  Step 7 calls it with the head file when filing new findings.
+
+Step 7:
+
+- ``file_new_findings`` — done (Task 1): turns reviewer findings into
+  stored ones (IDs, ``new → open``, snippets). Dedupe is Task 3.
 """
 
 import logging
@@ -33,8 +37,9 @@ from github.Repository import Repository
 from pydantic import ValidationError
 
 from clients import github
-from models.finding import FindingStatus
+from models.finding import Finding, FindingStatus
 from models.review_state import (
+    MAX_DESCRIPTION_CHARS,
     ReviewState,
     StoredFinding,
     finding_number,
@@ -54,6 +59,7 @@ __all__ = [
     "SNIPPET_CONTEXT_LINES",
     "check_transition",
     "cut_snippet",
+    "file_new_findings",
     "load_memory",
     "parse_state_block",
     "render_state_block",
@@ -384,3 +390,69 @@ def cut_snippet(
 
     start = max(line - 1 - context, 0)
     return "\n".join(lines[start : line + context])
+
+
+# --- Filing new findings ---------------------------------------------------
+
+
+def file_new_findings(
+    state: ReviewState,
+    findings: list[Finding],
+    file_texts: dict[str, str | None],
+) -> tuple[list[StoredFinding], ReviewState]:
+    """File fresh reviewer ``findings`` into ``state``.
+
+    Each finding gets the next free ID (the LLM's own ``F001``… is thrown
+    away), moves ``new → open``, and gets its ``snippet`` cut from
+    ``file_texts[finding.file]`` — the head file, fetched once per file by
+    the caller. Returns the stored findings, in the same order as
+    ``findings``, and a copy of ``state`` with them appended (``state``
+    itself is not modified).
+
+    Untrusted LLM fields are coerced rather than failing the whole review:
+
+    - a line below 1 is stored as 1;
+    - a description over ``MAX_DESCRIPTION_CHARS`` is cut, ending in ``…``
+      (the visible comment still shows it in full);
+    - a file with no text (``None`` or missing — deleted, made up, binary
+      or too large) gets an empty snippet, logged as a warning, since
+      Step 9 cannot re-check it.
+    """
+    ids, state = allocate_ids(state, len(findings))
+    stored: list[StoredFinding] = []
+    for finding_id, finding in zip(ids, findings):
+        check_transition(FindingStatus.NEW, FindingStatus.OPEN)
+        line = finding.line
+        if line < 1:
+            logger.warning("%s: line %d is below 1, storing 1", finding_id, line)
+            line = 1
+        file_text = file_texts.get(finding.file)
+        snippet = cut_snippet(file_text, line) if file_text is not None else ""
+        if not snippet:
+            logger.warning(
+                "%s: no snippet for %s:%d (file missing at head or line past EOF)",
+                finding_id,
+                finding.file,
+                line,
+            )
+        stored.append(
+            StoredFinding(
+                id=finding_id,
+                status=FindingStatus.OPEN,
+                severity=finding.severity,
+                file=finding.file,
+                line=line,
+                title=finding.title,
+                description=_cap_description(finding.description),
+                confidence=finding.confidence,
+                snippet=snippet,
+            )
+        )
+    return stored, state.model_copy(update={"findings": state.findings + stored})
+
+
+def _cap_description(text: str) -> str:
+    """Cut ``text`` to ``MAX_DESCRIPTION_CHARS``, ending in ``…`` when cut."""
+    if len(text) <= MAX_DESCRIPTION_CHARS:
+        return text
+    return text[: MAX_DESCRIPTION_CHARS - 1].rstrip() + "…"

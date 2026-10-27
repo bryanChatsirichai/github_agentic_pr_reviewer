@@ -14,7 +14,7 @@ import os
 from typing import Any
 
 from dotenv import load_dotenv
-from github import Auth, Github
+from github import Auth, Github, GithubException
 from github.Repository import Repository
 
 load_dotenv()  # idempotent — no-op when main.py has already loaded .env
@@ -33,6 +33,7 @@ __all__ = [
     "get_pull_request",
     "get_pr_files",
     "get_pr_diff",
+    "get_file_content",
     "get_existing_review_comments",
     "post_review_comment",
 ]
@@ -145,6 +146,35 @@ def get_pr_diff(
     """
     files = get_pr_files(pr_number, repo=repo, client=client)
     return "".join(_diff_section(f) for f in files)
+
+
+def get_file_content(
+    path: str,
+    ref: str,
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> str | None:
+    """Return the text of file ``path`` at commit ``ref``, or None.
+
+    None means there is no text to read: the path does not exist at ``ref``
+    (404 — deleted, or a path the LLM made up), it is a directory, or the
+    file is over the contents API's 1 MB limit (returned with encoding
+    ``"none"`` and no content). Other API errors propagate. Bytes that are
+    not UTF-8 are replaced rather than raising, so a binary file yields
+    junk text instead of failing the run.
+    """
+    try:
+        content = (repo or _get_repo(client)).get_contents(path, ref=ref)
+    except GithubException as exc:
+        if exc.status == 404:
+            logger.debug("%s not found at %s", path, ref)
+            return None
+        raise
+    if isinstance(content, list) or content.encoding != "base64":
+        logger.debug("%s at %s is a directory or too large to fetch", path, ref)
+        return None
+    return content.decoded_content.decode("utf-8", errors="replace")
 
 
 def get_existing_review_comments(

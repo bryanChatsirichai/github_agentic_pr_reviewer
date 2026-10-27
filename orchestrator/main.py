@@ -17,11 +17,16 @@ from agents import llm
 from agents.llm import resolve_model
 from agents.reviewer_agents.factory import build_reviewer
 from agents.reviewer_agents.parser import FindingParseError
-from clients.github import verify_connection
+from clients.github import get_file_content, verify_connection
 from models.pr_context import PRContext
 from models.review import ReviewResult
 from orchestrator.context_builder import build_context
-from orchestrator.memory import StateTooLargeError, load_memory, save_memory
+from orchestrator.memory import (
+    StateTooLargeError,
+    file_new_findings,
+    load_memory,
+    save_memory,
+)
 
 load_dotenv()
 
@@ -111,8 +116,7 @@ def run_review(pr_number: int) -> ReviewResult:
     provider, model = resolve_model()
     logger.info("Using LLM provider=%s model=%s", provider, model)
 
-    # State from the bot's last review comment (empty → full review). Not
-    # used yet: Step 7 feeds its findings into the reviewer prompt.
+    # State from the bot's last review comment (empty → full review).
     state = load_memory(pr_number)
     logger.info("Loaded %d previous finding(s) from memory", len(state.findings))
 
@@ -125,9 +129,24 @@ def run_review(pr_number: int) -> ReviewResult:
         result.overall_rating,
     )
 
+    # Snippets come from the head file, fetched once per file with findings
+    # (dict.fromkeys keeps order and drops repeats).
+    paths = dict.fromkeys(f.file for f in result.findings)
+    file_texts = {p: get_file_content(p, ref=context.head_sha) for p in paths}
+    filed, state = file_new_findings(state, result.findings, file_texts)
+    # Show the stored IDs, not the LLM's own numbering, so the visible
+    # comment matches the state block. Descriptions stay full-length here.
+    result = result.model_copy(
+        update={
+            "findings": [
+                f.model_copy(update={"id": stored.id})
+                for f, stored in zip(result.findings, filed)
+            ]
+        }
+    )
+
     # Posting is saving: the comment carries the state block, so a failed
-    # post records nothing. Step 7 updates the state (new findings, SHAs)
-    # before this; until then it is carried forward unchanged.
+    # post records nothing. The SHAs are updated in Step 7 Task 5.
     save_memory(pr_number, render_comment(context, result), state)
     return result
 
