@@ -200,12 +200,12 @@ def run_review(pr_number: int) -> ReviewResult | None:
     paths = dict.fromkeys(f.file for f in new_findings)
     file_texts = {p: get_file_content(p, ref=context.head_sha) for p in paths}
     filed, state = file_new_findings(state, new_findings, file_texts)
-    # Show the stored IDs, not the LLM's own numbering, so the visible
+    # Show the stored IDs and lines, not the LLM's own, so the visible
     # comment matches the state block. Descriptions stay full-length here.
     result = result.model_copy(
         update={
             "findings": [
-                f.model_copy(update={"id": stored.id})
+                f.model_copy(update={"id": stored.id, "line": stored.line})
                 for f, stored in zip(new_findings, filed)
             ]
         }

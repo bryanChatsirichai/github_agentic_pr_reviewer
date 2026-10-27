@@ -107,6 +107,24 @@ def test_main_files_new_findings_into_the_posted_state(monkeypatch, stub_review)
     assert "### F002 — Off-by-one in loop" in stub_review["body"]
 
 
+def test_main_shows_the_stored_line_when_it_was_coerced(monkeypatch, stub_review) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "build_reviewer",
+        lambda name: SimpleNamespace(
+            review=lambda ctx: ReviewResult(
+                overall_rating="comment", findings=[make_finding(line=0)]
+            )
+        ),
+    )
+
+    assert main(["--pr", "42", "--event", "opened"]) == 0
+
+    assert parse_state_block(stub_review["body"]).findings[0].line == 1
+    assert "`src/cli.py:1`" in stub_review["body"]
+    assert "`src/cli.py:0`" not in stub_review["body"]
+
+
 def test_main_does_not_refile_a_known_issue(monkeypatch, stub_review) -> None:
     # The stub reviewer repeats stored F001 (same file, line and title).
     previous = earlier_review()
