@@ -1,7 +1,7 @@
 """Finding - the contract every later step (memory, re-check, judge) builds on.
 
 A ``Finding`` is one reviewer-reported issue in a PR. Its ``status`` moves it
-through the lifecycle of design section 20 (``new -> open -> resolved/rejected/
+through the lifecycle of design section 11 (``new -> open -> resolved/rejected/
 reopened -> verified -> closed``); ``orchestrator/memory.py`` (Step 6) persists
 that lifecycle and moves findings across commits.
 
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 
 class FindingStatus(StrEnum):
-    """Finding lifecycle (design section 20).
+    """Finding lifecycle (design section 11).
 
     ``new`` is transient — it becomes ``open`` once the orchestrator files
     the finding into memory. Transitions (e.g. ``resolved -> reopened`` on

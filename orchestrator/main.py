@@ -17,11 +17,18 @@ from agents import llm
 from agents.llm import resolve_model
 from agents.reviewer_agents.factory import build_reviewer
 from agents.reviewer_agents.parser import FindingParseError
-from clients.github import verify_connection
+from clients.github import get_file_content, get_merge_base_sha, verify_connection
 from models.pr_context import PRContext
 from models.review import ReviewResult
+from models.review_state import KNOWN_ISSUE_STATUSES, StoredFinding
 from orchestrator.context_builder import build_context
-from orchestrator.memory import StateTooLargeError, load_memory, save_memory
+from orchestrator.memory import (
+    StateTooLargeError,
+    drop_duplicates,
+    file_new_findings,
+    load_memory,
+    save_memory,
+)
 
 load_dotenv()
 
@@ -67,6 +74,12 @@ def render_comment(context: PRContext, result: ReviewResult) -> str:
     agent — known facts must not be restated by a model that could
     misremember them. The overall rating is the agent's judgment. The
     MARKER line is prepended by ``post_review_comment``.
+
+    With previous findings (``context.previous_findings`` in a
+    ``KNOWN_ISSUE_STATUSES`` status) the body has two sections: those
+    findings one line each, then this run's new ones in full — so an issue
+    that was deduped away still shows, and "No issues found" is never
+    claimed while one is open. Without them, only the new findings.
     """
     files = context.summary.file_list
     lines = [
@@ -80,10 +93,28 @@ def render_comment(context: PRContext, result: ReviewResult) -> str:
         "",
     ]
     findings = result.findings
-    if not findings:
+    previous = [
+        f for f in context.previous_findings if f.status in KNOWN_ISSUE_STATUSES
+    ]
+    if previous:
+        # Earlier reviews: old issues as one line each (the developer has
+        # read the details), then this run's issues in full.
+        lines += [
+            f"**Previous findings ({len(previous)}):**",
+            "",
+            _previous_section(previous),
+            "",
+            f"**New findings ({len(findings)}):**",
+            "",
+        ]
+        if not findings:
+            lines += ["No new issues found."]
+            return "\n".join(lines).rstrip()
+    elif not findings:
         lines += ["No issues found. 🎉"]
         return "\n".join(lines).rstrip()
-    lines += [f"Found {len(findings)} issue(s):", ""]
+    else:
+        lines += [f"Found {len(findings)} issue(s):", ""]
     for f in findings:
         lines += [
             f"### {f.id} — {f.title}",
@@ -96,6 +127,19 @@ def render_comment(context: PRContext, result: ReviewResult) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _previous_section(findings: list[StoredFinding], inline_limit: int = 10) -> str:
+    """One line per previous finding, collapsed once the list gets long."""
+    listed = "\n".join(
+        # Whitespace collapsed: the title comes from an editable comment.
+        f"- **{f.id}** — {' '.join(f.title.split())} · `{f.file}:{f.line}` · "
+        + (f"{f.status} ({f.rejected_by})" if f.rejected_by else f"{f.status}")
+        for f in findings
+    )
+    if len(findings) <= inline_limit:
+        return listed
+    return f"<details>\n<summary>Show all {len(findings)}</summary>\n\n{listed}\n\n</details>"
+
+
 def _files_section(files: list[str], inline_limit: int = 10) -> str:
     """List the checked files, collapsed once the list gets long."""
     if len(files) <= inline_limit:
@@ -104,19 +148,35 @@ def _files_section(files: list[str], inline_limit: int = 10) -> str:
     return f"<details>\n<summary>Files checked ({len(files)})</summary>\n\n{listed}\n\n</details>"
 
 
-def run_review(pr_number: int) -> ReviewResult:
-    """Full review pass for one PR: context → reviewer → comment on GitHub."""
+def run_review(pr_number: int) -> ReviewResult | None:
+    """Full review pass for one PR: context → reviewer → comment on GitHub.
+
+    Returns None, posting nothing, when the head commit was already
+    reviewed.
+    """
     # Config errors (missing provider/key) raise RuntimeError here, before
     # any GitHub write — fail fast rather than half way through a review.
     provider, model = resolve_model()
     logger.info("Using LLM provider=%s model=%s", provider, model)
 
-    # State from the bot's last review comment (empty → full review). Not
-    # used yet: Step 7 feeds its findings into the reviewer prompt.
+    # State from the bot's last review comment (empty → full review).
     state = load_memory(pr_number)
     logger.info("Loaded %d previous finding(s) from memory", len(state.findings))
 
-    context = build_context(pr_number)
+    # The reviewer sees what was already reported so it doesn't repeat it.
+    context = build_context(pr_number).model_copy(
+        update={"previous_findings": state.findings}
+    )
+
+    # Same commit as the last posted review (e.g. "Re-run job"): nothing
+    # new to say, so stop before the LLM call and post nothing.
+    if context.head_sha == state.reviewed_sha:
+        logger.info(
+            "Head %s was already reviewed — skipping, nothing posted",
+            context.head_sha[:10],
+        )
+        return None
+
     reviewer = build_reviewer("logic-reviewer")
     result = reviewer.review(context)
     logger.info(
@@ -125,9 +185,50 @@ def run_review(pr_number: int) -> ReviewResult:
         result.overall_rating,
     )
 
+    # The prompt asks the reviewer not to repeat known issues; this enforces
+    # it, before any ID is handed out.
+    new_findings = drop_duplicates(state.findings, result.findings)
+    if len(new_findings) < len(result.findings):
+        logger.info(
+            "Dropped %d duplicate finding(s), %d new",
+            len(result.findings) - len(new_findings),
+            len(new_findings),
+        )
+
+    # Snippets come from the head file, fetched once per file with findings
+    # (dict.fromkeys keeps order and drops repeats).
+    paths = dict.fromkeys(f.file for f in new_findings)
+    file_texts = {p: get_file_content(p, ref=context.head_sha) for p in paths}
+    filed, state = file_new_findings(state, new_findings, file_texts)
+    # Show the stored IDs and lines, not the LLM's own, so the visible
+    # comment matches the state block. Descriptions stay full-length here.
+    result = result.model_copy(
+        update={
+            "findings": [
+                f.model_copy(update={"id": stored.id, "line": stored.line})
+                for f, stored in zip(new_findings, filed)
+            ]
+        }
+    )
+
+    # Record which code this review covers; Step 8 diffs from here and
+    # Step 9 skips files whose blob is unchanged. A file without a blob SHA
+    # (if GitHub ever sends none) is left out rather than failing the run.
+    state = state.model_copy(
+        update={
+            "reviewed_sha": context.head_sha,
+            "base_ref": context.base_branch,
+            "base_merge_sha": get_merge_base_sha(
+                context.base_branch, context.head_sha
+            ),
+            "file_shas": {
+                f["filename"]: f["sha"] for f in context.changed_files if f.get("sha")
+            },
+        }
+    )
+
     # Posting is saving: the comment carries the state block, so a failed
-    # post records nothing. Step 7 updates the state (new findings, SHAs)
-    # before this; until then it is carried forward unchanged.
+    # post records nothing — the next run then starts from the old SHAs.
     save_memory(pr_number, render_comment(context, result), state)
     return result
 

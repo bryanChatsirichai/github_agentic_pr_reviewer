@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from models.review_state import StoredFinding
+
 
 class ContextSummary(BaseModel):
     """Precomputed stats about the diff, so later steps can decide whether to
@@ -39,12 +41,14 @@ class PRContext(BaseModel):
     head_sha: str
     #: Unified diff for the whole PR (see ``clients.github.get_pr_diff``).
     diff: str
-    #: Raw entries from ``clients.github.get_pr_files`` (filename, status,
-    #: additions, deletions, previous_filename, patch).
+    #: Raw entries from ``clients.github.get_pr_files`` (filename, sha,
+    #: status, additions, deletions, previous_filename, patch).
     changed_files: list[dict[str, Any]]
     #: Prior bot comments (see ``clients.github.MARKER``), oldest first, as
     #: returned by ``get_existing_review_comments``.
     existing_comments: list[dict[str, Any]]
-    #: Memory isn't implemented yet — always empty, reserved for future use.
-    previous_findings: list[Any] = Field(default_factory=list)
+    #: Findings from the bot's earlier reviews, as loaded by ``load_memory``.
+    #: ``build_context`` leaves it empty; ``run_review`` fills it from the
+    #: state. Untrusted: it was parsed from an editable PR comment.
+    previous_findings: list[StoredFinding] = Field(default_factory=list)
     summary: ContextSummary

@@ -19,7 +19,7 @@ def test_build_context_populates_every_field() -> None:
     assert len(ctx.changed_files) == 3
     # Only the bot comment survives the MARKER filter.
     assert [c["id"] for c in ctx.existing_comments] == [501]
-    # Memory isn't wired in yet.
+    # Filled from memory by run_review, not from GitHub.
     assert ctx.previous_findings == []
     # Summary stays in sync with the diff and file list.
     assert ctx.diff.startswith("diff --git a/src/cli.py b/src/cli.py")

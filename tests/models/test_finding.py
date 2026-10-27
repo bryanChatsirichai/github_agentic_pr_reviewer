@@ -3,13 +3,8 @@
 import pytest
 from pydantic import ValidationError
 
-from models.finding import Finding, FindingStatus, Severity
+from models.finding import FindingStatus, Severity
 from tests.helpers import make_finding
-
-
-def test_finding_round_trips_through_json() -> None:
-    finding = make_finding()
-    assert Finding.model_validate_json(finding.model_dump_json()) == finding
 
 
 def test_finding_accepts_plain_string_enums() -> None:

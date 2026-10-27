@@ -17,6 +17,7 @@ from agents.reviewer_agents.parser import FindingParseError, parse_review
 from models.finding import Finding
 from models.pr_context import PRContext
 from models.review import ReviewResult
+from models.review_state import KNOWN_ISSUE_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -142,5 +143,21 @@ def render_pr_context(context: PRContext) -> str:
     ]
     if context.body.strip():
         lines += ["", "## PR description", context.body.strip()]
+    listed = [
+        f for f in context.previous_findings if f.status in KNOWN_ISSUE_STATUSES
+    ]
+    if listed:
+        lines += ["", "## Previous findings"]
+        # One line each, whitespace collapsed: the fields come from an
+        # editable PR comment, so a newline must not start a fake section.
+        lines += [
+            _one_line(f"- {f.id} [{f.status}] {f.file}:{f.line} — {f.title}")
+            for f in listed
+        ]
     lines += ["", "## Diff", "```diff", context.diff, "```"]
     return "\n".join(lines)
+
+
+def _one_line(text: str) -> str:
+    """Collapse all whitespace, newlines included, to single spaces."""
+    return " ".join(text.split())

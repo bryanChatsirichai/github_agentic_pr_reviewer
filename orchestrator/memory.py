@@ -1,7 +1,7 @@
 """Per-PR review memory, embedded in the bot's own PR comments.
 
 Every Actions run starts on a fresh runner, so the ``ReviewState`` rides
-inside each posted review comment as a hidden HTML comment (design section 6)::
+inside each posted review comment as a hidden HTML comment (design section 10)::
 
     🤖 AI Review
     ...visible findings...
@@ -20,12 +20,20 @@ Status (Step 6):
 - ``ALLOWED_TRANSITIONS`` / ``transition`` — done (Task 5).
 - ``allocate_ids`` — done (Task 6).
 - ``cut_snippet`` — done (Task 1): the orchestrator-side snippet cutter.
-  Step 7 calls it with the head file when filing new findings.
+
+Step 7:
+
+- ``file_new_findings`` — done (Task 1): turns reviewer findings into
+  stored ones (IDs, ``new → open``, snippets).
+- ``drop_duplicates`` — done (Task 3): removes repeats of already-reported
+  issues before IDs are handed out.
 """
 
 import logging
 import os
+import re
 from collections import Counter
+from difflib import SequenceMatcher
 from typing import Literal
 
 from github import Github
@@ -33,8 +41,10 @@ from github.Repository import Repository
 from pydantic import ValidationError
 
 from clients import github
-from models.finding import FindingStatus
+from models.finding import Finding, FindingStatus
 from models.review_state import (
+    KNOWN_ISSUE_STATUSES,
+    MAX_DESCRIPTION_CHARS,
     ReviewState,
     StoredFinding,
     finding_number,
@@ -54,6 +64,10 @@ __all__ = [
     "SNIPPET_CONTEXT_LINES",
     "check_transition",
     "cut_snippet",
+    "DUPLICATE_LINE_WINDOW",
+    "DUPLICATE_TITLE_SIMILARITY",
+    "drop_duplicates",
+    "file_new_findings",
     "load_memory",
     "parse_state_block",
     "render_state_block",
@@ -279,7 +293,7 @@ def _status_counts(findings: list[StoredFinding]) -> str:
     return " ".join(f"{s.value}={counts[s]}" for s in FindingStatus if counts[s])
 
 
-# --- Finding lifecycle (design section 20) -------------------------------
+# --- Finding lifecycle (design section 11) -------------------------------
 
 #: Every legal status move; anything else raises. ``rejected`` and
 #: ``closed`` are terminal. ``new`` only ever leaves for ``open`` — that
@@ -384,3 +398,150 @@ def cut_snippet(
 
     start = max(line - 1 - context, 0)
     return "\n".join(lines[start : line + context])
+
+
+# --- Dropping duplicates -------------------------------------------------
+
+#: How far a repeat may drift from the stored line and still match on a
+#: merely similar title.
+DUPLICATE_LINE_WINDOW = 3
+
+#: ``difflib`` ratio two normalised titles need to count as similar. A
+#: starting guess: "Input validation missing" vs "Missing input
+#: validation" scores 0.67, so it is not far above real rewordings — tune it
+#: against real reviewer output.
+DUPLICATE_TITLE_SIMILARITY = 0.6
+
+
+def drop_duplicates(
+    stored: list[StoredFinding], findings: list[Finding]
+) -> list[Finding]:
+    """Return ``findings`` without the issues that were already reported.
+
+    A finding is a duplicate when it is in the same file as an earlier one
+    and either the normalised titles are equal, or it is within
+    ``DUPLICATE_LINE_WINDOW`` lines and the titles are similar
+    (``DUPLICATE_TITLE_SIMILARITY``). "Earlier" means a stored finding in a
+    ``KNOWN_ISSUE_STATUSES`` status, or a finding kept earlier in this same
+    batch — the reviewer sometimes reports one issue twice.
+
+    Snippets are not compared: they are cut around whatever line the LLM
+    names, so a 2-line drift breaks an exact match. Nearby lines alone are
+    not enough either — two different bugs on adjacent lines must both be
+    kept, since hiding a real finding is worse than showing a duplicate.
+    A heavy rewording at a moved line still gets through.
+
+    Dropped findings are logged with the ID they matched; stored findings
+    are not changed (re-checking them is Step 9).
+    """
+    earlier = [
+        (f.file, f.line, _normalise_title(f.title), f.id)
+        for f in stored
+        if f.status in KNOWN_ISSUE_STATUSES
+    ]
+    kept: list[Finding] = []
+    for finding in findings:
+        title = _normalise_title(finding.title)
+        match = next(
+            (
+                label
+                for file, line, other, label in earlier
+                if file == finding.file
+                and _same_issue(finding.line, title, line, other)
+            ),
+            None,
+        )
+        if match is not None:
+            logger.info(
+                "Dropping duplicate of %s: %s:%d %r",
+                match,
+                finding.file,
+                finding.line,
+                finding.title,
+            )
+            continue
+        kept.append(finding)
+        earlier.append((finding.file, finding.line, title, "a finding in this review"))
+    return kept
+
+
+def _same_issue(line: int, title: str, other_line: int, other_title: str) -> bool:
+    """The matching rule of ``drop_duplicates``, for two findings in one file."""
+    if title == other_title:
+        return True
+    return (
+        abs(line - other_line) <= DUPLICATE_LINE_WINDOW
+        and SequenceMatcher(None, title, other_title).ratio()
+        >= DUPLICATE_TITLE_SIMILARITY
+    )
+
+
+def _normalise_title(title: str) -> str:
+    """Lowercase, punctuation to spaces, whitespace collapsed."""
+    return " ".join(re.sub(r"[^\w\s]", " ", title.lower()).split())
+
+
+# --- Filing new findings ---------------------------------------------------
+
+
+def file_new_findings(
+    state: ReviewState,
+    findings: list[Finding],
+    file_texts: dict[str, str | None],
+) -> tuple[list[StoredFinding], ReviewState]:
+    """File fresh reviewer ``findings`` into ``state``.
+
+    Each finding gets the next free ID (the LLM's own ``F001``… is thrown
+    away), moves ``new → open``, and gets its ``snippet`` cut from
+    ``file_texts[finding.file]`` — the head file, fetched once per file by
+    the caller. Returns the stored findings, in the same order as
+    ``findings``, and a copy of ``state`` with them appended (``state``
+    itself is not modified).
+
+    Untrusted LLM fields are coerced rather than failing the whole review:
+
+    - a line below 1 is stored as 1;
+    - a description over ``MAX_DESCRIPTION_CHARS`` is cut, ending in ``…``
+      (the visible comment still shows it in full);
+    - a file with no text (``None`` or missing — deleted, made up, binary
+      or too large) gets an empty snippet, logged as a warning, since
+      Step 9 cannot re-check it.
+    """
+    ids, state = allocate_ids(state, len(findings))
+    stored: list[StoredFinding] = []
+    for finding_id, finding in zip(ids, findings):
+        check_transition(FindingStatus.NEW, FindingStatus.OPEN)
+        line = finding.line
+        if line < 1:
+            logger.warning("%s: line %d is below 1, storing 1", finding_id, line)
+            line = 1
+        file_text = file_texts.get(finding.file)
+        snippet = cut_snippet(file_text, line) if file_text is not None else ""
+        if not snippet:
+            logger.warning(
+                "%s: no snippet for %s:%d (file missing at head or line past EOF)",
+                finding_id,
+                finding.file,
+                line,
+            )
+        stored.append(
+            StoredFinding(
+                id=finding_id,
+                status=FindingStatus.OPEN,
+                severity=finding.severity,
+                file=finding.file,
+                line=line,
+                title=finding.title,
+                description=_cap_description(finding.description),
+                confidence=finding.confidence,
+                snippet=snippet,
+            )
+        )
+    return stored, state.model_copy(update={"findings": state.findings + stored})
+
+
+def _cap_description(text: str) -> str:
+    """Cut ``text`` to ``MAX_DESCRIPTION_CHARS``, ending in ``…`` when cut."""
+    if len(text) <= MAX_DESCRIPTION_CHARS:
+        return text
+    return text[: MAX_DESCRIPTION_CHARS - 1].rstrip() + "…"

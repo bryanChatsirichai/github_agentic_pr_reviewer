@@ -8,8 +8,9 @@ __pycache__/
 # uv / virtualenv
 .venv/
 
-# Runtime review state (per-PR memory)
-memory/
+# Runtime review state (per-PR memory). Anchored to the repo root so it
+# doesn't also hide tests/orchestrator/memory/.
+/memory/
 
 # Tooling caches
 .pytest_cache/
