@@ -23,6 +23,7 @@ from models.review import ReviewResult
 from orchestrator.context_builder import build_context
 from orchestrator.memory import (
     StateTooLargeError,
+    drop_duplicates,
     file_new_findings,
     load_memory,
     save_memory,
@@ -132,18 +133,28 @@ def run_review(pr_number: int) -> ReviewResult:
         result.overall_rating,
     )
 
+    # The prompt asks the reviewer not to repeat known issues; this enforces
+    # it, before any ID is handed out.
+    new_findings = drop_duplicates(state.findings, result.findings)
+    if len(new_findings) < len(result.findings):
+        logger.info(
+            "Dropped %d duplicate finding(s), %d new",
+            len(result.findings) - len(new_findings),
+            len(new_findings),
+        )
+
     # Snippets come from the head file, fetched once per file with findings
     # (dict.fromkeys keeps order and drops repeats).
-    paths = dict.fromkeys(f.file for f in result.findings)
+    paths = dict.fromkeys(f.file for f in new_findings)
     file_texts = {p: get_file_content(p, ref=context.head_sha) for p in paths}
-    filed, state = file_new_findings(state, result.findings, file_texts)
+    filed, state = file_new_findings(state, new_findings, file_texts)
     # Show the stored IDs, not the LLM's own numbering, so the visible
     # comment matches the state block. Descriptions stay full-length here.
     result = result.model_copy(
         update={
             "findings": [
                 f.model_copy(update={"id": stored.id})
-                for f, stored in zip(result.findings, filed)
+                for f, stored in zip(new_findings, filed)
             ]
         }
     )

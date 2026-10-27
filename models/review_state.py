@@ -34,6 +34,19 @@ MAX_DESCRIPTION_CHARS = 300
 #: Finding IDs: ``F`` + at least three digits (``F001`` … ``F999``, ``F1000``).
 _ID_PATTERN = r"^F\d{3,}$"
 
+#: Statuses of findings that count as already reported: the reviewer is
+#: shown them and must not repeat them, and repeats are dropped. ``verified``
+#: and ``closed`` are left out — their fix was confirmed, so if the issue
+#: comes back it is a new finding.
+KNOWN_ISSUE_STATUSES = frozenset(
+    {
+        FindingStatus.OPEN,
+        FindingStatus.REOPENED,
+        FindingStatus.RESOLVED,
+        FindingStatus.REJECTED,
+    }
+)
+
 
 def finding_number(finding_id: str) -> int:
     """Return the numeric part of a finding ID: ``"F007"`` → ``7``."""

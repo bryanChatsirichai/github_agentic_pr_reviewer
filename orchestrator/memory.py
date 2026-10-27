@@ -24,12 +24,16 @@ Status (Step 6):
 Step 7:
 
 - ``file_new_findings`` — done (Task 1): turns reviewer findings into
-  stored ones (IDs, ``new → open``, snippets). Dedupe is Task 3.
+  stored ones (IDs, ``new → open``, snippets).
+- ``drop_duplicates`` — done (Task 3): removes repeats of already-reported
+  issues before IDs are handed out.
 """
 
 import logging
 import os
+import re
 from collections import Counter
+from difflib import SequenceMatcher
 from typing import Literal
 
 from github import Github
@@ -39,6 +43,7 @@ from pydantic import ValidationError
 from clients import github
 from models.finding import Finding, FindingStatus
 from models.review_state import (
+    KNOWN_ISSUE_STATUSES,
     MAX_DESCRIPTION_CHARS,
     ReviewState,
     StoredFinding,
@@ -59,6 +64,9 @@ __all__ = [
     "SNIPPET_CONTEXT_LINES",
     "check_transition",
     "cut_snippet",
+    "DUPLICATE_LINE_WINDOW",
+    "DUPLICATE_TITLE_SIMILARITY",
+    "drop_duplicates",
     "file_new_findings",
     "load_memory",
     "parse_state_block",
@@ -390,6 +398,87 @@ def cut_snippet(
 
     start = max(line - 1 - context, 0)
     return "\n".join(lines[start : line + context])
+
+
+# --- Dropping duplicates -------------------------------------------------
+
+#: How far a repeat may drift from the stored line and still match on a
+#: merely similar title.
+DUPLICATE_LINE_WINDOW = 3
+
+#: ``difflib`` ratio two normalised titles need to count as similar. A
+#: starting guess: "Input validation missing" vs "Missing input
+#: validation" scores 0.67, so it is not far above real rewordings — tune it
+#: against real reviewer output.
+DUPLICATE_TITLE_SIMILARITY = 0.6
+
+
+def drop_duplicates(
+    stored: list[StoredFinding], findings: list[Finding]
+) -> list[Finding]:
+    """Return ``findings`` without the issues that were already reported.
+
+    A finding is a duplicate when it is in the same file as an earlier one
+    and either the normalised titles are equal, or it is within
+    ``DUPLICATE_LINE_WINDOW`` lines and the titles are similar
+    (``DUPLICATE_TITLE_SIMILARITY``). "Earlier" means a stored finding in a
+    ``KNOWN_ISSUE_STATUSES`` status, or a finding kept earlier in this same
+    batch — the reviewer sometimes reports one issue twice.
+
+    Snippets are not compared: they are cut around whatever line the LLM
+    names, so a 2-line drift breaks an exact match. Nearby lines alone are
+    not enough either — two different bugs on adjacent lines must both be
+    kept, since hiding a real finding is worse than showing a duplicate.
+    A heavy rewording at a moved line still gets through.
+
+    Dropped findings are logged with the ID they matched; stored findings
+    are not changed (re-checking them is Step 9).
+    """
+    earlier = [
+        (f.file, f.line, _normalise_title(f.title), f.id)
+        for f in stored
+        if f.status in KNOWN_ISSUE_STATUSES
+    ]
+    kept: list[Finding] = []
+    for finding in findings:
+        title = _normalise_title(finding.title)
+        match = next(
+            (
+                label
+                for file, line, other, label in earlier
+                if file == finding.file
+                and _same_issue(finding.line, title, line, other)
+            ),
+            None,
+        )
+        if match is not None:
+            logger.info(
+                "Dropping duplicate of %s: %s:%d %r",
+                match,
+                finding.file,
+                finding.line,
+                finding.title,
+            )
+            continue
+        kept.append(finding)
+        earlier.append((finding.file, finding.line, title, "a finding in this review"))
+    return kept
+
+
+def _same_issue(line: int, title: str, other_line: int, other_title: str) -> bool:
+    """The matching rule of ``drop_duplicates``, for two findings in one file."""
+    if title == other_title:
+        return True
+    return (
+        abs(line - other_line) <= DUPLICATE_LINE_WINDOW
+        and SequenceMatcher(None, title, other_title).ratio()
+        >= DUPLICATE_TITLE_SIMILARITY
+    )
+
+
+def _normalise_title(title: str) -> str:
+    """Lowercase, punctuation to spaces, whitespace collapsed."""
+    return " ".join(re.sub(r"[^\w\s]", " ", title.lower()).split())
 
 
 # --- Filing new findings ---------------------------------------------------
