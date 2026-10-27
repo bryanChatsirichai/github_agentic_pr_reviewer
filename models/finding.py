@@ -50,9 +50,8 @@ class Finding(BaseModel):
 
     id: str = Field(
         description=(
-            "Stable identifier (``F001``, ``F002``, ...) that survives across "
-            "commits so re-reviews refer back to the same finding instead of "
-            "re-reporting it. Assigned by the orchestrator, not the reviewer."
+            "Sequence ``F001``, ``F002``, ... in report order. The orchestrator "
+            "may renumber it so the ID stays stable across commits."
         )
     )
     status: FindingStatus = Field(

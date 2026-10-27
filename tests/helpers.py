@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 from models.finding import Finding, FindingStatus, Severity
 from models.pr_context import ContextSummary, PRContext
+from models.review_state import ReviewState, StoredFinding
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "pr-42.json"
 
@@ -37,6 +38,7 @@ def make_fake_pr(fixture: dict) -> SimpleNamespace:
                 id=c["id"],
                 body=c["body"],
                 created_at=datetime.fromisoformat(c["created_at"]),
+                user=SimpleNamespace(login=c["user"]["login"]),
             )
             for c in fixture["issue_comments"]
         ],
@@ -64,6 +66,35 @@ def make_finding(**overrides) -> Finding:
         confidence=0.9,
     )
     return Finding(**(fields | overrides))
+
+
+def make_stored_finding(**overrides) -> StoredFinding:
+    """A valid StoredFinding (state-block shape); pass keyword overrides."""
+    fields = dict(
+        id="F001",
+        status=FindingStatus.OPEN,
+        severity=Severity.MEDIUM,
+        file="src/cli.py",
+        line=12,
+        title="Missing input validation",
+        description="argv[1] is used without checking length.",
+        confidence=0.9,
+        snippet="n = int(sys.argv[1])",
+    )
+    return StoredFinding(**(fields | overrides))
+
+
+def make_review_state(**overrides) -> ReviewState:
+    """A populated ReviewState holding one open finding; pass overrides."""
+    fields = dict(
+        reviewed_sha="headdef456",
+        base_ref="main",
+        base_merge_sha="baseabc123",
+        next_id=2,
+        file_shas={"src/cli.py": "blob111", "src/fibonacci.py": "blob222"},
+        findings=[make_stored_finding()],
+    )
+    return ReviewState(**(fields | overrides))
 
 
 def make_context(**overrides) -> PRContext:
