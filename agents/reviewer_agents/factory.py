@@ -14,7 +14,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from agents.llm import get_llm
 from agents.reviewer_agents.parser import FindingParseError, parse_review
-from models.finding import Finding
+from models.finding import Finding, FindingStatus
 from models.pr_context import PRContext
 from models.review import ReviewResult
 
@@ -142,5 +142,32 @@ def render_pr_context(context: PRContext) -> str:
     ]
     if context.body.strip():
         lines += ["", "## PR description", context.body.strip()]
+    listed = [f for f in context.previous_findings if f.status in _LISTED_STATUSES]
+    if listed:
+        lines += ["", "## Previous findings"]
+        # One line each, whitespace collapsed: the fields come from an
+        # editable PR comment, so a newline must not start a fake section.
+        lines += [
+            _one_line(f"- {f.id} [{f.status}] {f.file}:{f.line} — {f.title}")
+            for f in listed
+        ]
     lines += ["", "## Diff", "```diff", context.diff, "```"]
     return "\n".join(lines)
+
+
+#: Previous findings the reviewer must not report again. ``verified`` and
+#: ``closed`` are left out: their fix was confirmed, so if the issue comes
+#: back it is a new finding.
+_LISTED_STATUSES = frozenset(
+    {
+        FindingStatus.OPEN,
+        FindingStatus.REOPENED,
+        FindingStatus.RESOLVED,
+        FindingStatus.REJECTED,
+    }
+)
+
+
+def _one_line(text: str) -> str:
+    """Collapse all whitespace, newlines included, to single spaces."""
+    return " ".join(text.split())

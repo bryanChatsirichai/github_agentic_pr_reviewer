@@ -120,7 +120,10 @@ def run_review(pr_number: int) -> ReviewResult:
     state = load_memory(pr_number)
     logger.info("Loaded %d previous finding(s) from memory", len(state.findings))
 
-    context = build_context(pr_number)
+    # The reviewer sees what was already reported so it doesn't repeat it.
+    context = build_context(pr_number).model_copy(
+        update={"previous_findings": state.findings}
+    )
     reviewer = build_reviewer("logic-reviewer")
     result = reviewer.review(context)
     logger.info(

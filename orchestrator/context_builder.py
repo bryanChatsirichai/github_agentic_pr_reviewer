@@ -28,8 +28,8 @@ def build_context(
     """Fetch PR #``pr_number`` via the GitHub client and pack it into a ``PRContext``.
 
     Combines PR metadata, the unified diff, changed files, and existing bot
-    comments into one object. ``previous_findings`` stays empty until
-    memory exists.
+    comments into one object. ``previous_findings`` is left empty: it comes
+    from memory, not GitHub, so ``run_review`` fills it in.
     """
     metadata = github.get_pull_request(pr_number, repo=repo, client=client)
     changed_files = github.get_pr_files(pr_number, repo=repo, client=client)
