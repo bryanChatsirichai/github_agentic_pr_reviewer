@@ -247,7 +247,6 @@ def main(argv: list[str] | None = None) -> int:
             response = chat_model.invoke("Testing what model is being used")
             logger.info("Response: %s", response)
             logger.info("Manual dispatch (--pr 0): no PR to review, done.")
-            return 0
         run_review(args.pr)
     except (
         RuntimeError,
