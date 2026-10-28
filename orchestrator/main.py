@@ -262,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         # loudly — an empty or missing comment must never look like a clean
         # review.
         logger.error("Review failed: %s", exc)
-        return 0
+        return 100
     return 0
 
 
