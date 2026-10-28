@@ -14,7 +14,7 @@ import json
 from pydantic import ValidationError
 
 from models.finding import Finding
-from models.review import RATINGS, ReviewResult, derived_rating
+from models.review_result import RATINGS, ReviewResult, derived_rating
 
 __all__ = ["FindingParseError", "parse_review"]
 
@@ -31,7 +31,7 @@ def parse_review(raw: str | list) -> ReviewResult:
     returning ``AIMessage.content`` as a list of content blocks (Gemini
     does this intermittently) instead of a string. A bare findings array
     is accepted as a degraded reply — the rating is then derived from the
-    finding severities (see ``models.review.derived_rating``). Anything
+    finding severities (see ``models.review_result.derived_rating``). Anything
     else raises ``FindingParseError`` with the reason.
     """
     text = _extract_json_payload(_strip_code_fences(_content_to_text(raw)))

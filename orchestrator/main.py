@@ -19,8 +19,8 @@ from agents.reviewer_agents.factory import build_reviewer
 from agents.reviewer_agents.parser import FindingParseError
 from clients.github import get_file_content, get_merge_base_sha, verify_connection
 from models.pr_context import PRContext
-from models.review import ReviewResult
-from models.review_state import KNOWN_ISSUE_STATUSES, StoredFinding
+from models.review_result import ReviewResult
+from models.stored_finding import KNOWN_ISSUE_STATUSES, StoredFinding
 from orchestrator.context_builder import build_context
 from orchestrator.memory import (
     StateTooLargeError,
@@ -230,6 +230,9 @@ def run_review(pr_number: int) -> ReviewResult | None:
 
     # Posting is saving: the comment carries the state block, so a failed
     # post records nothing — the next run then starts from the old SHAs.
+    #   context: the PR info, built at the start of the run
+    #   result:  this run's new findings, after the duplicate check and ID rewrite
+    #   state:   everything to remember for the next run
     save_memory(pr_number, render_comment(context, result), state)
     return result
 
@@ -248,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
             response = chat_model.invoke("Testing what model is being used")
             logger.info("Response: %s", response)
             logger.info("Manual dispatch (--pr 0): no PR to review, done.")
+            return 0
         run_review(args.pr)
     except (
         RuntimeError,
@@ -262,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         # loudly — an empty or missing comment must never look like a clean
         # review.
         logger.error("Review failed: %s", exc)
-        return 100
+        return 1
     return 0
 
 

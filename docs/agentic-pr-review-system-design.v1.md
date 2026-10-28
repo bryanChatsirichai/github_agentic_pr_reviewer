@@ -72,10 +72,10 @@ The system should eventually support:
 | 0 | Project setup (uv, pytest, entry point) | ✅ | `pyproject.toml`, `orchestrator/main.py` |
 | 1 | GitHub Actions trigger | ✅ | `.github/workflows/pr-review.yml` (+ `pr-review-reusable.yml`) |
 | 2 | GitHub client module | ✅ | `clients/github.py` |
-| 3 | PR context builder | ✅ | `orchestrator/context_builder.py`, `models/pr_context.py` |
-| 4 | First LLM review | ✅ | `agents/llm.py`, `agents/reviewer_agents/`, `models/finding.py`, `models/review.py` |
+| 3 | PR context builder | ✅ | `orchestrator/context_builder.py`, `models/pr_context.py`, `models/context_summary.py` |
+| 4 | First LLM review | ✅ | `agents/llm.py`, `agents/reviewer_agents/`, `models/finding.py`, `models/review_result.py` |
 | 5 | Re-review on every commit | ✅ | verification only |
-| 6 | Finding store (state in bot comments) | ✅ | `orchestrator/memory.py`, `models/review_state.py` |
+| 6 | Finding store (state in bot comments) | ✅ | `orchestrator/memory.py`, `models/review_state.py`, `models/stored_finding.py` |
 | 7 | Wire memory into the review flow | ✅ | `orchestrator/main.py`, `orchestrator/memory.py`, `clients/github.py`; verified on a live PR on 2026-10-27 |
 | 8 | Incremental diff | 📋 | `orchestrator/diff.py` |
 | 9 | Finding re-check pass | 📋 | `orchestrator/recheck.py`, `prompts/recheck.md` |
@@ -168,9 +168,11 @@ flowchart LR
 
     subgraph md ["models/"]
         M1[pr_context.py]
-        M2[finding.py]
-        M3[review.py]
-        M4[review_state.py]
+        M2[context_summary.py]
+        M3[finding.py]
+        M4[review_result.py]
+        M5[stored_finding.py]
+        M6[review_state.py]
     end
 
     GHAPI[(GitHub REST API)]
@@ -442,7 +444,7 @@ classDiagram
 
 There are two kinds of finding on purpose:
 
-| | `Finding` (`models/finding.py`) | `StoredFinding` (`models/review_state.py`) |
+| | `Finding` (`models/finding.py`) | `StoredFinding` (`models/stored_finding.py`) |
 |---|---|---|
 | Written by | the reviewer LLM (structured output) | the orchestrator only |
 | `id` | the LLM's own `F001…` numbering, thrown away | stable ID from `next_id`, never reused |
@@ -1029,10 +1031,12 @@ github_agentic_pr_reviewer/
 ├── clients/
 │   └── github.py                      # all GitHub reads/writes
 ├── models/
+│   ├── context_summary.py             # ContextSummary
 │   ├── finding.py                     # Finding, FindingStatus, Severity
-│   ├── pr_context.py                  # PRContext, ContextSummary
-│   ├── review.py                      # ReviewResult, Rating, derived_rating
-│   └── review_state.py                # ReviewState, StoredFinding, KNOWN_ISSUE_STATUSES
+│   ├── pr_context.py                  # PRContext
+│   ├── review_result.py               # ReviewResult, Rating, derived_rating
+│   ├── review_state.py                # ReviewState
+│   └── stored_finding.py              # StoredFinding, KNOWN_ISSUE_STATUSES, finding-ID helpers
 ├── orchestrator/
 │   ├── main.py                        # entry point, run_review, render_comment
 │   ├── context_builder.py             # build_context

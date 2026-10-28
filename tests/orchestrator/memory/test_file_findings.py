@@ -1,7 +1,8 @@
 """Tests for ``file_new_findings``: reviewer findings → stored findings."""
 
 from models.finding import FindingStatus
-from models.review_state import MAX_DESCRIPTION_CHARS, ReviewState
+from models.review_state import ReviewState
+from models.stored_finding import MAX_DESCRIPTION_CHARS
 from orchestrator.memory import file_new_findings
 from tests.helpers import make_finding, make_review_state
 

@@ -10,9 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from models.context_summary import ContextSummary
 from models.finding import Finding, FindingStatus, Severity
-from models.pr_context import ContextSummary, PRContext
-from models.review_state import ReviewState, StoredFinding
+from models.pr_context import PRContext
+from models.review_state import ReviewState
+from models.stored_finding import StoredFinding
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "pr-42.json"
 
