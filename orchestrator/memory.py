@@ -231,6 +231,7 @@ def load_memory(
     )
 
     for comment in newest_first:
+        # Skip comments not authored by the bot login.
         if comment["author"] != login:
             continue
         state = parse_state_block(comment["body"])

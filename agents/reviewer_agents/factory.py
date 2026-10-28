@@ -19,7 +19,7 @@ from models.pr_context import PRContext
 from models.review import ReviewResult
 from models.review_state import KNOWN_ISSUE_STATUSES
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("pr-reviewer.reviewer")
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
