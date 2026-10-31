@@ -5,12 +5,16 @@ the raw GitHub data (``clients/github.py``) into a flat, agent-ready shape.
 Nothing here talks to GitHub directly — this module only defines the data.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from models.context_summary import ContextSummary
 from models.stored_finding import StoredFinding
+
+#: How ``PRContext.diff`` was chosen (``orchestrator.diff.choose_diff``):
+#: the whole PR, only the commits since the last review, or nothing new.
+DiffMode = Literal["full", "incremental", "noop"]
 
 
 class PRContext(BaseModel):
@@ -27,10 +31,14 @@ class PRContext(BaseModel):
     head_branch: str
     base_sha: str
     head_sha: str
-    #: Unified diff for the whole PR (see ``clients.github.get_pr_diff``).
+    #: Unified diff the reviewer sees: the whole PR or only the commits
+    #: since the last review, per ``diff_mode``. Empty for ``noop``.
     diff: str
+    #: Which diff ``diff`` holds, so later agents know what they are seeing.
+    diff_mode: DiffMode = "full"
     #: Raw entries from ``clients.github.get_pr_files`` (filename, sha,
-    #: status, additions, deletions, previous_filename, patch).
+    #: status, additions, deletions, previous_filename, patch). Always the
+    #: whole PR, whatever ``diff_mode`` is.
     changed_files: list[dict[str, Any]]
     #: Prior bot comments (see ``clients.github.MARKER``), oldest first, as
     #: returned by ``get_existing_review_comments``.

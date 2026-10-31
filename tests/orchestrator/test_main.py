@@ -42,7 +42,7 @@ def stub_review(monkeypatch):
     monkeypatch.setattr(main_module, "verify_connection", lambda: "owner/repo")
     monkeypatch.setattr(main_module, "resolve_model", lambda: ("google", "test-model"))
     monkeypatch.setattr(main_module, "load_memory", lambda pr: ReviewState())
-    monkeypatch.setattr(main_module, "build_context", lambda pr: make_context())
+    monkeypatch.setattr(main_module, "build_context", lambda pr, state: make_context())
     monkeypatch.setattr(main_module, "get_file_content", lambda path, ref: "line\n" * 20)
     monkeypatch.setattr(main_module, "get_merge_base_sha", lambda base, head: "mergebase789")
     monkeypatch.setattr(
@@ -152,7 +152,7 @@ def test_main_records_the_reviewed_code_in_the_state(monkeypatch, stub_review) -
         {"filename": "assets/logo.png", "sha": None},  # no blob SHA → left out
     ]
     monkeypatch.setattr(
-        main_module, "build_context", lambda pr: make_context(changed_files=files)
+        main_module, "build_context", lambda pr, state: make_context(changed_files=files)
     )
     merge_base_calls = []
     monkeypatch.setattr(
@@ -172,10 +172,27 @@ def test_main_records_the_reviewed_code_in_the_state(monkeypatch, stub_review) -
     assert merge_base_calls == [("main", "headdef456")]
 
 
-def test_main_skips_a_commit_that_was_already_reviewed(monkeypatch, stub_review) -> None:
-    # "Re-run job" at the same SHA: no LLM call, no second comment, exit 0.
+def test_main_reviews_against_the_loaded_state(monkeypatch, stub_review) -> None:
+    # build_context needs the state to choose full vs incremental.
+    previous = earlier_review()
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: previous)
+    seen = {}
     monkeypatch.setattr(
-        main_module, "load_memory", lambda pr: make_review_state(reviewed_sha="headdef456")
+        main_module,
+        "build_context",
+        lambda pr, state: seen.update(state=state) or make_context(),
+    )
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+    assert seen["state"] is previous
+
+
+def test_main_skips_a_noop_diff(monkeypatch, stub_review) -> None:
+    # Nothing new to review (e.g. "Re-run job" at the same SHA): no LLM
+    # call, no second comment, exit 0.
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: earlier_review())
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(diff_mode="noop", diff="")
     )
 
     def must_not_review(name):
@@ -244,7 +261,7 @@ def test_main_fetches_each_file_with_findings_once(monkeypatch, stub_review) -> 
 def test_main_manual_dispatch_does_not_review(monkeypatch, stub_review) -> None:
     # --pr 0 is the workflow_dispatch smoke test: it checks the token and
     # pings the LLM, but never builds a context or posts a review.
-    monkeypatch.setattr(main_module.llm, "get_llm", lambda: SimpleNamespace(invoke=lambda msg: "ok"))
+    monkeypatch.setattr(main_module.llm, "get_llm", lambda: SimpleNamespace(invoke=lambda msg: SimpleNamespace(content="ok")))
     monkeypatch.setattr(github_client, "post_review_comment", must_not_post)
 
     assert main(["--pr", "0", "--event", "push"]) == 0

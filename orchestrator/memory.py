@@ -76,6 +76,7 @@ __all__ = [
 ]
 
 logger = logging.getLogger("pr-reviewer.memory")
+flow = logging.getLogger("pr-reviewer.flow")
 
 # --- Block format -------------------------------------------------------
 
@@ -236,16 +237,17 @@ def load_memory(
             continue
         state = parse_state_block(comment["body"])
         if state is not None:
-            logger.info(
-                "Loaded state from comment #%s: %d finding(s), reviewed_sha=%s",
+            flow.info(
+                "[memory] state from comment #%s: %d finding(s) [%s], reviewed_sha=%s",
                 comment["id"],
                 len(state.findings),
+                _status_counts(state.findings) or "none",
                 state.reviewed_sha,
             )
             return state
         logger.warning("Comment #%s has no valid state block", comment["id"])
 
-    logger.info("No previous state on PR #%s — full review", pr_number)
+    flow.info("[memory] no previous state on PR #%s — first review", pr_number)
     return ReviewState()
 
 
@@ -275,14 +277,15 @@ def save_memory(
         pr_number, f"{body}\n\n{block}", repo=repo, client=client
     )
     # Logged after the post: only a posted block counts as saved.
-    logger.info(
-        "Saved state in comment #%s: %d finding(s) [%s], next_id=%d, "
-        "reviewed_sha=%s, block %d chars",
+    flow.info(
+        "[post] comment #%s saved state: %d finding(s) [%s], next_id=%d, "
+        "reviewed_sha=%s, base_merge_sha=%s, block %d chars",
         comment_id,
         len(state.findings),
-        _status_counts(state.findings),
+        _status_counts(state.findings) or "none",
         state.next_id,
         state.reviewed_sha,
+        state.base_merge_sha,
         len(block),
     )
     return comment_id

@@ -10,6 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from github import GithubException
+
 from models.context_summary import ContextSummary
 from models.finding import Finding, FindingStatus, Severity
 from models.pr_context import PRContext
@@ -53,6 +55,35 @@ def make_repo(pr) -> MagicMock:
     repo = MagicMock()
     repo.get_pull.return_value = pr
     return repo
+
+
+def fake_compare(*, status: str = "ahead", files=(), merge_base: str = "mb000"):
+    """A ``repo.compare`` side effect that answers like GitHub.
+
+    ``main`` vs head gives the merge-base (``get_merge_base_sha``); any
+    other base — the last reviewed commit — gives ``status`` and ``files``
+    (``get_pr_files``-shaped dicts) for ``compare_commits``.
+    """
+
+    def compare(base: str, head: str) -> SimpleNamespace:
+        if base == "main":
+            return SimpleNamespace(merge_base_commit=SimpleNamespace(sha=merge_base))
+        return SimpleNamespace(status=status, files=[SimpleNamespace(**f) for f in files])
+
+    return compare
+
+
+class GoneComparison:
+    """A Comparison whose base commit is gone. PyGithub's Comparison is lazy:
+    the API error is raised on the first attribute read, not by
+    ``repo.compare`` itself."""
+
+    def __init__(self, http_status: int = 404) -> None:
+        self._http_status = http_status
+
+    @property
+    def status(self) -> str:
+        raise GithubException(self._http_status, {"message": "Not Found"})
 
 
 def make_finding(**overrides) -> Finding:

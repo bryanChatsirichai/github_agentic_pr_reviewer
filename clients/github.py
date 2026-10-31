@@ -15,6 +15,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from github import Auth, Github, GithubException
+from github.File import File
 from github.Repository import Repository
 
 load_dotenv()  # idempotent — no-op when main.py has already loaded .env
@@ -33,6 +34,8 @@ __all__ = [
     "get_pull_request",
     "get_pr_files",
     "get_pr_diff",
+    "render_diff",
+    "compare_commits",
     "get_file_content",
     "get_merge_base_sha",
     "get_existing_review_comments",
@@ -75,7 +78,7 @@ def verify_connection() -> str:
     Raises on bad/missing token or unreachable repo.
     """
     repo = _get_repo()
-    logger.info("GitHub connection OK — repo %s", repo.full_name)
+    logger.debug("GitHub connection OK — repo %s", repo.full_name)
     return repo.full_name
 
 
@@ -119,19 +122,7 @@ def get_pr_files(
     oversized files.
     """
     pr = (repo or _get_repo(client)).get_pull(pr_number)
-    files: list[dict[str, Any]] = []
-    for f in pr.get_files():
-        files.append(
-            {
-                "filename": f.filename,
-                "sha": f.sha,
-                "status": f.status,
-                "additions": f.additions,
-                "deletions": f.deletions,
-                "previous_filename": f.previous_filename,
-                "patch": f.patch,
-            }
-        )
+    files = [_file_entry(f) for f in pr.get_files()]
     logger.debug("Loaded %d changed file(s) for PR #%s", len(files), pr_number)
     return files
 
@@ -148,8 +139,32 @@ def get_pr_diff(
     git-style ``diff --git`` / ``---`` / ``+++`` headers, so the result is a
     valid unified diff and needs no extra API call.
     """
-    files = get_pr_files(pr_number, repo=repo, client=client)
+    return render_diff(get_pr_files(pr_number, repo=repo, client=client))
+
+
+def render_diff(files: list[dict[str, Any]]) -> str:
+    """Render ``get_pr_files``-shaped entries as one unified diff. No API call."""
     return "".join(_diff_section(f) for f in files)
+
+
+def compare_commits(
+    base: str,
+    head: str,
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> dict[str, Any]:
+    """Compare commit ``base`` with ``head``: ``{"status", "files"}``.
+
+    ``status`` is ``ahead`` / ``behind`` / ``identical`` / ``diverged``;
+    ``files`` has ``get_pr_files``-shaped entries for what changed between
+    them — at most 300, GitHub's cap per compare. PyGithub's comparison is
+    lazy, so an API error (404 when ``base`` no longer exists) is raised
+    here, on the first attribute read, not by ``repo.compare``.
+    """
+    comparison = (repo or _get_repo(client)).compare(base, head)
+    status = comparison.status
+    return {"status": status, "files": [_file_entry(f) for f in comparison.files]}
 
 
 def get_merge_base_sha(
@@ -245,8 +260,21 @@ def post_review_comment(
         body = f"{MARKER}\n\n{body}"
     pr = (repo or _get_repo(client)).get_pull(pr_number)
     comment = pr.create_issue_comment(body)
-    logger.info("Posted review comment #%s on PR #%s", comment.id, pr_number)
+    logger.debug("Posted review comment #%s on PR #%s", comment.id, pr_number)
     return comment.id
+
+
+def _file_entry(f: File) -> dict[str, Any]:
+    """One PyGithub ``File`` as the plain dict ``get_pr_files`` documents."""
+    return {
+        "filename": f.filename,
+        "sha": f.sha,
+        "status": f.status,
+        "additions": f.additions,
+        "deletions": f.deletions,
+        "previous_filename": f.previous_filename,
+        "patch": f.patch,
+    }
 
 
 def _diff_section(f: dict[str, Any]) -> str:

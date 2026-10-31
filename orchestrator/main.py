@@ -43,7 +43,12 @@ logging.basicConfig(
 # PyGithub pins its own "github" logger to INFO on import, so the root level
 # alone never reaches it. It masks the Authorization header in debug logs.
 logging.getLogger("github").setLevel(logging.getLogger().level)
+# Flow trace: one line per pipeline stage plus the route taken (skip /
+# review, later full / incremental / noop). Pinned to INFO so the run's
+# audit trail survives a quieter LOG_LEVEL (WARNING, ERROR).
+logging.getLogger("pr-reviewer.flow").setLevel(logging.INFO)
 logger = logging.getLogger("pr-reviewer")
+flow = logging.getLogger("pr-reviewer.flow")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -152,36 +157,33 @@ def _files_section(files: list[str], inline_limit: int = 10) -> str:
 def run_review(pr_number: int) -> ReviewResult | None:
     """Full review pass for one PR: context → reviewer → comment on GitHub.
 
-    Returns None, posting nothing, when the head commit was already
-    reviewed.
+    Returns None, posting nothing, when there is nothing new to review
+    (``diff_mode == "noop"``).
     """
     # Config errors (missing provider/key) raise RuntimeError here, before
     # any GitHub write — fail fast rather than half way through a review.
     provider, model = resolve_model()
-    logger.info("Using LLM provider=%s model=%s", provider, model)
+    flow.info("[config] provider=%s model=%s", provider, model)
 
     # State from the bot's last review comment (empty → full review).
     state = load_memory(pr_number)
-    logger.info("Loaded %d previous finding(s) from memory", len(state.findings))
 
-    # The reviewer sees what was already reported so it doesn't repeat it.
-    context = build_context(pr_number).model_copy(
+    # The state picks the diff (full / incremental / noop); the reviewer
+    # also sees what was already reported so it doesn't repeat it.
+    context = build_context(pr_number, state).model_copy(
         update={"previous_findings": state.findings}
     )
 
-    # Same commit as the last posted review (e.g. "Re-run job"): nothing
-    # new to say, so stop before the LLM call and post nothing.
-    if context.head_sha == state.reviewed_sha:
-        logger.info(
-            "Head %s was already reviewed — skipping, nothing posted",
-            context.head_sha[:10],
-        )
+    # Nothing new since the last posted review (e.g. "Re-run job"): stop
+    # before the LLM call and post nothing. reviewed_sha stays put.
+    if context.diff_mode == "noop":
+        flow.info("[route] noop — no new commits since last review")
         return None
 
     reviewer = build_reviewer("logic-reviewer")
     result = reviewer.review(context)
-    logger.info(
-        "Reviewer returned %d finding(s), rating=%s",
+    flow.info(
+        "[review] %d finding(s), rating=%s",
         len(result.findings),
         result.overall_rating,
     )
@@ -189,18 +191,18 @@ def run_review(pr_number: int) -> ReviewResult | None:
     # The prompt asks the reviewer not to repeat known issues; this enforces
     # it, before any ID is handed out.
     new_findings = drop_duplicates(state.findings, result.findings)
-    if len(new_findings) < len(result.findings):
-        logger.info(
-            "Dropped %d duplicate finding(s), %d new",
-            len(result.findings) - len(new_findings),
-            len(new_findings),
-        )
+    flow.info(
+        "[dedupe] %d duplicate(s) dropped, %d new",
+        len(result.findings) - len(new_findings),
+        len(new_findings),
+    )
 
     # Snippets come from the head file, fetched once per file with findings
     # (dict.fromkeys keeps order and drops repeats).
     paths = dict.fromkeys(f.file for f in new_findings)
     file_texts = {p: get_file_content(p, ref=context.head_sha) for p in paths}
     filed, state = file_new_findings(state, new_findings, file_texts)
+    flow.info("[file] %s", ", ".join(f.id for f in filed) or "nothing to file")
     # Show the stored IDs and lines, not the LLM's own, so the visible
     # comment matches the state block. Descriptions stay full-length here.
     result = result.model_copy(
@@ -239,20 +241,22 @@ def run_review(pr_number: int) -> ReviewResult | None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    logger.info("Starting review for PR #%s (event: %s)", args.pr, args.event)
-    
+    flow.info("[start] PR #%s event=%s", args.pr, args.event)
+
     try:
         repo_full_name = verify_connection()
-        logger.info("GitHub token OK for repo: %s", repo_full_name)
+        flow.info("[github] connected to %s", repo_full_name)
         if args.pr == 0:
             # Manual workflow-dispatch test path: proves the runner boots,
             # without needing a real PR to review.
+            flow.info("[route] manual dispatch (--pr 0) — LLM smoke test only")
             chat_model = llm.get_llm()
             response = chat_model.invoke("Testing what model is being used")
-            logger.info("Response: %s", response)
-            logger.info("Manual dispatch (--pr 0): no PR to review, done.")
+            logger.info("LLM replied: %.200s", response.content)
+            logger.debug("Full LLM response: %r", response)
+            flow.info("[done] manual dispatch OK")
             return 0
-        run_review(args.pr)
+        result = run_review(args.pr)
     except (
         RuntimeError,
         GithubException,
@@ -265,8 +269,16 @@ def main(argv: list[str] | None = None) -> int:
         # = too many open findings to fit the state block. All fail the run
         # loudly — an empty or missing comment must never look like a clean
         # review.
-        logger.error("Review failed: %s", exc)
+        # Traceback only at DEBUG: the message names the cause; the stack
+        # is for digging into it.
+        flow.error(
+            "[failed] %s: %s",
+            type(exc).__name__,
+            exc,
+            exc_info=logger.isEnabledFor(logging.DEBUG),
+        )
         return 1
+    flow.info("[done] %s", "skipped" if result is None else "posted")
     return 0
 
 
