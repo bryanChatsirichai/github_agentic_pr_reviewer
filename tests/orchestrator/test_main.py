@@ -244,7 +244,7 @@ def test_main_fetches_each_file_with_findings_once(monkeypatch, stub_review) -> 
 def test_main_manual_dispatch_does_not_review(monkeypatch, stub_review) -> None:
     # --pr 0 is the workflow_dispatch smoke test: it checks the token and
     # pings the LLM, but never builds a context or posts a review.
-    monkeypatch.setattr(main_module.llm, "get_llm", lambda: SimpleNamespace(invoke=lambda msg: "ok"))
+    monkeypatch.setattr(main_module.llm, "get_llm", lambda: SimpleNamespace(invoke=lambda msg: SimpleNamespace(content="ok")))
     monkeypatch.setattr(github_client, "post_review_comment", must_not_post)
 
     assert main(["--pr", "0", "--event", "push"]) == 0

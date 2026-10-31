@@ -75,7 +75,7 @@ def verify_connection() -> str:
     Raises on bad/missing token or unreachable repo.
     """
     repo = _get_repo()
-    logger.info("GitHub connection OK — repo %s", repo.full_name)
+    logger.debug("GitHub connection OK — repo %s", repo.full_name)
     return repo.full_name
 
 
@@ -245,7 +245,7 @@ def post_review_comment(
         body = f"{MARKER}\n\n{body}"
     pr = (repo or _get_repo(client)).get_pull(pr_number)
     comment = pr.create_issue_comment(body)
-    logger.info("Posted review comment #%s on PR #%s", comment.id, pr_number)
+    logger.debug("Posted review comment #%s on PR #%s", comment.id, pr_number)
     return comment.id
 
 

@@ -16,6 +16,7 @@ from models.context_summary import ContextSummary
 from models.pr_context import PRContext
 
 logger = logging.getLogger("pr-reviewer.context_builder")
+flow = logging.getLogger("pr-reviewer.flow")
 
 __all__ = ["build_context"]
 
@@ -58,13 +59,15 @@ def build_context(
         existing_comments=existing_comments,
         summary=summary,
     )
-    logger.info(
-        "Built PRContext for PR #%s: %d changed file(s), %d char diff, %d prior comment(s)",
-        pr_number,
+    flow.info(
+        "[context] %s @ %s → %s: %d file(s), %d char diff",
+        context.head_branch,
+        context.head_sha[:10],
+        context.base_branch,
         len(changed_files),
         summary.diff_size,
-        len(existing_comments),
     )
+    logger.debug("%d prior bot comment(s) on PR #%s", len(existing_comments), pr_number)
     # Cap the list so huge PRs (hundreds of files) can't flood one log line.
     shown, hidden = summary.file_list[:30], len(summary.file_list) - 30
     logger.info(
