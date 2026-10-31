@@ -157,8 +157,8 @@ def _files_section(files: list[str], inline_limit: int = 10) -> str:
 def run_review(pr_number: int) -> ReviewResult | None:
     """Full review pass for one PR: context → reviewer → comment on GitHub.
 
-    Returns None, posting nothing, when the head commit was already
-    reviewed.
+    Returns None, posting nothing, when there is nothing new to review
+    (``diff_mode == "noop"``).
     """
     # Config errors (missing provider/key) raise RuntimeError here, before
     # any GitHub write — fail fast rather than half way through a review.
@@ -168,20 +168,17 @@ def run_review(pr_number: int) -> ReviewResult | None:
     # State from the bot's last review comment (empty → full review).
     state = load_memory(pr_number)
 
-    # The reviewer sees what was already reported so it doesn't repeat it.
-    context = build_context(pr_number).model_copy(
+    # The state picks the diff (full / incremental / noop); the reviewer
+    # also sees what was already reported so it doesn't repeat it.
+    context = build_context(pr_number, state).model_copy(
         update={"previous_findings": state.findings}
     )
 
-    # Same commit as the last posted review (e.g. "Re-run job"): nothing
-    # new to say, so stop before the LLM call and post nothing.
-    if context.head_sha == state.reviewed_sha:
-        flow.info(
-            "[route] skip — head %s already reviewed, nothing posted",
-            context.head_sha[:10],
-        )
+    # Nothing new since the last posted review (e.g. "Re-run job"): stop
+    # before the LLM call and post nothing. reviewed_sha stays put.
+    if context.diff_mode == "noop":
+        flow.info("[route] noop — no new commits since last review")
         return None
-    flow.info("[route] review — full diff")
 
     reviewer = build_reviewer("logic-reviewer")
     result = reviewer.review(context)

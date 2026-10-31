@@ -296,14 +296,21 @@ tests/orchestrator/test_diff.py
 ```
 
 **Tasks:**
-1. `full_diff` — the PR diff from `get_pr_diff` (per-file patches, so base-branch changes are excluded). What Phase B used.
+1. `full_diff(changed_files)` — the PR diff (per-file patches, so base-branch changes are excluded). What Phase B used. Rendered from the files `build_context` already fetched via `clients.github.render_diff`, the same renderer behind `get_pr_diff`, so the files are not fetched twice. **Done (2026-10-31).**
 2. Decision rule (do **not** use `pr.base.sha` — it is a snapshot from PR open/retarget and does not move with the base branch):
    - `cmp = repo.compare(base_ref, head_sha)`; `inc = repo.compare(reviewed_sha, head_sha)`.
    - **incremental** when `base_ref` is unchanged, `cmp.merge_base_commit.sha == state.base_merge_sha`, and `inc.status == "ahead"`. Diff = `inc` restricted to the current PR files.
    - **full** when `inc.status == "diverged"` (rebase / force-push), the merge-base moved (base merged into the branch, "Update branch"), `base_ref` changed (retarget), or a `GithubException` with status 404/422 is raised (old SHA gone). PyGithub's `compare()` is lazy — the exception surfaces on first attribute access (e.g. `.status`), not on the call itself.
    - **noop** when `inc.status == "identical"` (job re-run at the same SHA) → exit without posting.
+
+   **Done (2026-10-31):** `choose_diff` in `orchestrator/diff.py` returns `DiffChoice(mode, diff, reason)`. A new client function, `compare_commits`, reads `.status` itself, so the lazy 404/422 is raised inside it. Additions to the rule above: `behind` (branch reset to an older commit) → full; a compare listing 300 files (GitHub's per-compare cap, so possibly cut off) → full; a retarget is checked before noop, so a retargeted PR at the same head still gets a full review.
 3. `context_builder.py` picks the right diff and records `diff_mode: full | incremental | noop` in `PRContext` so later agents know.
-4. Catch `github.GithubException` in `main.py` alongside `RuntimeError` / `FindingParseError` (today it escapes uncaught).
+
+   **Done (2026-10-31):**
+   - `build_context(pr_number, state)` calls `choose_diff` and logs `[route] <mode> — <reason>`. The whole-PR diff is rendered from the files already fetched, so `get_pr_files` now runs once per run instead of twice.
+   - `run_review` replaces Step 7's `head_sha == reviewed_sha` skip with `diff_mode == "noop"`, so a PR retargeted at the same head is no longer skipped.
+   - New rule: if the new commits touch no file that is still in the PR, the result is noop rather than an empty diff for the LLM. `reviewed_sha` stays put, so the next run's range covers those commits.
+4. Catch `github.GithubException` in `main.py` alongside `RuntimeError` / `FindingParseError` (today it escapes uncaught). **Already done** (in `main()`'s except list since the Step 4 fixes).
 
 **Done when:** Test PR with three commits: third run's `PRContext.diff` contains only commit-3 changes; merging the base branch into the PR branch → full; merging a child PR into the PR branch → incremental containing only its changes; force-push/rebase → full.
 
