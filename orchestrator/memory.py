@@ -42,10 +42,10 @@ from pydantic import ValidationError
 
 from clients import github
 from models.finding import Finding, FindingStatus
-from models.review_state import (
+from models.review_state import ReviewState
+from models.stored_finding import (
     KNOWN_ISSUE_STATUSES,
     MAX_DESCRIPTION_CHARS,
-    ReviewState,
     StoredFinding,
     finding_number,
     format_finding_id,
@@ -231,6 +231,7 @@ def load_memory(
     )
 
     for comment in newest_first:
+        # Skip comments not authored by the bot login.
         if comment["author"] != login:
             continue
         state = parse_state_block(comment["body"])

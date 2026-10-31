@@ -139,6 +139,7 @@ Note: this module is **orchestrator plumbing, not agent tools**. The pipeline ca
 ```text
 orchestrator/context_builder.py  # build_context — combines client data into PRContext
 models/pr_context.py       # PRContext: pr number, SHAs, diff, changed files, prev findings
+models/context_summary.py  # ContextSummary (split out of pr_context.py on 2026-10-28)
 tests/orchestrator/test_context_builder.py   # (originally tests/ — moved in Step 7)
 ```
 
@@ -161,7 +162,7 @@ tests/orchestrator/test_context_builder.py   # (originally tests/ — moved in S
 
 ```text
 models/finding.py          # Finding + statuses — the contract every later step uses
-models/review.py           # ReviewResult (planned as models/review_result.py)
+models/review_result.py    # ReviewResult (was models/review.py until 2026-10-28)
 agents/reviewer_agents/prompts/logic-reviewer.md
 agents/reviewer_agents/factory.py          # build a reviewer from prompt + model
 agents/reviewer_agents/parser.py           # JSON repair + validation into ReviewResult
@@ -216,6 +217,7 @@ Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 ```text
 orchestrator/memory.py     # load_memory / save_memory (replaces the Step 4 stub)
 models/review_state.py     # ReviewState pydantic model
+models/stored_finding.py   # StoredFinding + ID helpers (split out of review_state.py on 2026-10-28)
 tests/orchestrator/memory/test_memory.py   # (originally tests/ — moved in Step 7)
 ```
 

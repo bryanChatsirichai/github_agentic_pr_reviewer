@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage
 from agents.reviewer_agents.factory import Reviewer, build_reviewer, render_pr_context
 from agents.reviewer_agents.parser import FindingParseError
 from models.finding import FindingStatus
-from models.review import ReviewResult
+from models.review_result import ReviewResult
 from tests.helpers import make_context, make_finding, make_stored_finding
 
 

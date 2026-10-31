@@ -19,8 +19,8 @@ from agents.reviewer_agents.factory import build_reviewer
 from agents.reviewer_agents.parser import FindingParseError
 from clients.github import get_file_content, get_merge_base_sha, verify_connection
 from models.pr_context import PRContext
-from models.review import ReviewResult
-from models.review_state import KNOWN_ISSUE_STATUSES, StoredFinding
+from models.review_result import ReviewResult
+from models.stored_finding import KNOWN_ISSUE_STATUSES, StoredFinding
 from orchestrator.context_builder import build_context
 from orchestrator.memory import (
     StateTooLargeError,
@@ -32,16 +32,17 @@ from orchestrator.memory import (
 
 load_dotenv()
 
+# LOG_LEVEL sets the ROOT level, so DEBUG traces everything: our pr-reviewer.*
+# loggers plus libraries (httpx, openai, langchain, PyGithub, …) — very
+# verbose. `or` (not a .get default) so an empty value — e.g. an unset repo
+# variable in CI — falls back to INFO instead of crashing on level "".
 logging.basicConfig(
-    level=logging.INFO,
+    level=(os.environ.get("LOG_LEVEL") or "INFO").upper(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-# Debug verbosity for OUR loggers only (pr-reviewer.* — e.g. the truncated
-# PR context preview in context_builder). Scoping to this namespace keeps
-# LOG_LEVEL=DEBUG from also enabling very chatty httpx/google_genai output.
-logging.getLogger("pr-reviewer").setLevel(
-    os.environ.get("LOG_LEVEL", "INFO").upper()
-)
+# PyGithub pins its own "github" logger to INFO on import, so the root level
+# alone never reaches it. It masks the Authorization header in debug logs.
+logging.getLogger("github").setLevel(logging.getLogger().level)
 logger = logging.getLogger("pr-reviewer")
 
 
@@ -229,6 +230,9 @@ def run_review(pr_number: int) -> ReviewResult | None:
 
     # Posting is saving: the comment carries the state block, so a failed
     # post records nothing — the next run then starts from the old SHAs.
+    #   context: the PR info, built at the start of the run
+    #   result:  this run's new findings, after the duplicate check and ID rewrite
+    #   state:   everything to remember for the next run
     save_memory(pr_number, render_comment(context, result), state)
     return result
 

@@ -12,9 +12,9 @@ from github import GithubException
 import clients.github as github_client
 import orchestrator.main as main_module
 from agents.reviewer_agents.parser import FindingParseError
+from models.context_summary import ContextSummary
 from models.finding import FindingStatus
-from models.pr_context import ContextSummary
-from models.review import ReviewResult
+from models.review_result import ReviewResult
 from models.review_state import ReviewState
 from orchestrator.main import main, parse_args, render_comment
 from orchestrator.memory import StateTooLargeError, parse_state_block

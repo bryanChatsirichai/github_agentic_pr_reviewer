@@ -16,10 +16,10 @@ from agents.llm import get_llm
 from agents.reviewer_agents.parser import FindingParseError, parse_review
 from models.finding import Finding
 from models.pr_context import PRContext
-from models.review import ReviewResult
-from models.review_state import KNOWN_ISSUE_STATUSES
+from models.review_result import ReviewResult
+from models.stored_finding import KNOWN_ISSUE_STATUSES
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("pr-reviewer.reviewer")
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 

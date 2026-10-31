@@ -2,7 +2,8 @@
 
 import pytest
 
-from models.review_state import ReviewState, finding_number, format_finding_id
+from models.review_state import ReviewState
+from models.stored_finding import finding_number, format_finding_id
 from orchestrator.memory import allocate_ids
 from tests.helpers import make_review_state, make_stored_finding
 
