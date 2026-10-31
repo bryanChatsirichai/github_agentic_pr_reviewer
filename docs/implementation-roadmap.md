@@ -35,7 +35,7 @@ General rules:
 - [x] Step 5 — Re-review on every commit (still stateless)
 - [x] Step 6 — Finding store (JSON memory)
 - [x] Step 7 — Wire memory into the review flow
-- [ ] Step 8 — Incremental diff
+- [x] Step 8 — Incremental diff
 - [ ] Step 9 — Finding re-check pass
 - [ ] Step 9b — Inline review threads
 - [ ] Step 10 — LangGraph graph skeleton
@@ -282,7 +282,7 @@ Reviewer findings F004, F006 and F007 are real but low severity. F005 is a false
 
 ## Phase D — Incremental review & finding re-check
 
-### [ ] Step 8 — Incremental diff
+### [x] Step 8 — Incremental diff
 
 **Goal:** Review only `previous_sha → head_sha` on synchronize instead of the whole PR.
 
@@ -310,9 +310,20 @@ tests/orchestrator/test_diff.py
    - `build_context(pr_number, state)` calls `choose_diff` and logs `[route] <mode> — <reason>`. The whole-PR diff is rendered from the files already fetched, so `get_pr_files` now runs once per run instead of twice.
    - `run_review` replaces Step 7's `head_sha == reviewed_sha` skip with `diff_mode == "noop"`, so a PR retargeted at the same head is no longer skipped.
    - New rule: if the new commits touch no file that is still in the PR, the result is noop rather than an empty diff for the LLM. `reviewed_sha` stays put, so the next run's range covers those commits.
-4. Catch `github.GithubException` in `main.py` alongside `RuntimeError` / `FindingParseError` (today it escapes uncaught). **Already done** (in `main()`'s except list since the Step 4 fixes).
+4. Catch `github.GithubException` in `main.py` alongside `RuntimeError` / `FindingParseError` (today it escapes uncaught). **Already done** (in `main()`'s except list since the Step 4 fixes). Step 8's new error source, the compare call in `choose_diff`, is covered in two layers: `test_other_api_errors_propagate` (non-404/422 errors escape `choose_diff`) and `test_main_exits_1_on_github_api_error` (main turns a `GithubException` into exit 1).
 
 **Done when:** Test PR with three commits: third run's `PRContext.diff` contains only commit-3 changes; merging the base branch into the PR branch → full; merging a child PR into the PR branch → incremental containing only its changes; force-push/rebase → full.
+
+**Verified (2026-10-31):** `uv run pytest` passed with 223 tests. The four live checks were replayed against the real GitHub API on PR #8, read-only (no pushes to the PR, no comments, no LLM). They call `build_context` / `choose_diff` exactly as CI does. The CI logs need a login, so the `[route]` line was read from a local run instead.
+
+- [x] **Third commit → incremental.** `build_context(8, <state saved by the 783b4db review>)` at head `4528b32` gave `[route] NEW COMMITS CHECK — 5 file(s) changed since 783b4db1e1`. The diff's 5 files match `git diff 783b4db..4528b32` exactly.
+- [x] **Base branch merged in → full.** State recorded merge-base `7d3cb51` (main before PR #7); the real merge-base is now `d39ebdc`. Result: `full — merge-base moved 7d3cb51… → d39ebdc…`. main has not moved since the branch was cut, so this used real commits with that recorded state rather than a fresh "Update branch".
+- [x] **Child PR merged into the branch → incremental, only its changes.** Range `7d3cb51..d39ebdc` is the merge commit that brought PR #7's branch in. GitHub reported `ahead`, and the diff's 20 files match `git diff 7d3cb51..d39ebdc` exactly.
+- [x] **Force-push / rebase → full**, both outcomes:
+  - Old head still on GitHub: a temporary sibling commit of `4528b32` gave `full — history rewritten since 9bd97f7fb0 (diverged)`. It was pushed to `tmp/step8-diverged`, and that branch has been deleted.
+  - Old head gone: `c1e8d49`, a local-only commit, gave `full — cannot compare from c1e8d49a01 (HTTP 404, commit gone?)`.
+
+Bot finding F001 on this PR (an identical head skips the merge-base check) was considered and not changed. Same head means no new code to review, and noop leaves `base_merge_sha` stale, so the next push with new commits sees the move and runs a full review. It stays `open` in the state until Step 9 can read a developer's `F001:` reply.
 
 ---
 
@@ -336,7 +347,7 @@ tests/orchestrator/test_recheck.py
 3. Apply transitions through the Step 6 lifecycle table; a finding whose problem reappears goes `resolved → reopened`.
 4. Developer explanations: read human issue comments created after the last valid state comment that mention a finding ID (`F\d{3}`). Accept only from the PR author or `author_association` OWNER / MEMBER / COLLABORATOR; pass the text to the LLM as untrusted data. A justification the LLM accepts → `rejected` with `rejected_by=developer`, acknowledged in the next comment.
 5. Comment format from design section 14: previous findings with ✅/🟡 markers, then new findings. The "Overall" rating must take still-open previous findings into account. Today it rates only the new findings, so a comment can say `approve` next to open medium findings.
-6. Comment strategy (design section 19, moved here from Step 7 because only now can statuses change): skip posting when no status changed and there are no new findings — `reviewed_sha` then stays put and the next run's range covers it. Otherwise post a new summary comment. This is in addition to Step 7's same-SHA skip and Step 8's `noop`. Inline review threads come in Step 9b; state storage and re-check logic don't change for them.
+6. Comment strategy (design section 19, moved here from Step 7 because only now can statuses change): skip posting when no status changed and there are no new findings — `reviewed_sha` then stays put and the next run's range covers it. Otherwise post a new summary comment. This is in addition to Step 8's `noop`, which replaced Step 7's same-SHA skip. Inline review threads come in Step 9b; state storage and re-check logic don't change for them.
 
 **Done when:** Full scenario test on a real PR: commit 1 plants F001 → commit 2 fixes it (F001 → resolved in state + comment) → commit 3 reintroduces it (F001 → reopened). Plus: a collaborator's "F00x: intentional because …" reply leads to `rejected (developer)`; the same reply from a non-collaborator is ignored. This is design section 11 proven end-to-end.
 
