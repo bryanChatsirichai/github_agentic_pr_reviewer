@@ -13,6 +13,7 @@ from github import GithubException
 import clients.github as github
 from clients.github import (
     MARKER,
+    compare_commits,
     get_existing_review_comments,
     get_file_content,
     get_merge_base_sha,
@@ -22,7 +23,7 @@ from clients.github import (
     post_review_comment,
     verify_connection,
 )
-from tests.helpers import load_pr_fixture, make_fake_pr, make_repo
+from tests.helpers import GoneComparison, load_pr_fixture, make_fake_pr, make_repo
 
 
 @pytest.fixture
@@ -140,6 +141,30 @@ def test_get_merge_base_sha_compares_base_branch_with_head() -> None:
 
     assert get_merge_base_sha("main", "headdef456", repo=repo) == "mergebase789"
     repo.compare.assert_called_once_with("main", "headdef456")
+
+
+def test_compare_commits_returns_status_and_files(fixture) -> None:
+    repo = MagicMock()
+    repo.compare.return_value = SimpleNamespace(
+        status="ahead", files=[SimpleNamespace(**fixture["files"][0])]
+    )
+
+    result = compare_commits("old123", "headdef456", repo=repo)
+
+    repo.compare.assert_called_once_with("old123", "headdef456")
+    assert result["status"] == "ahead"
+    # Same entry shape as get_pr_files, so render_diff can format it.
+    assert result["files"] == [
+        get_pr_files(42, repo=make_repo(make_fake_pr(fixture)))[0]
+    ]
+
+
+def test_compare_commits_raises_the_lazy_api_error_itself() -> None:
+    repo = MagicMock()
+    repo.compare.return_value = GoneComparison()
+
+    with pytest.raises(GithubException):
+        compare_commits("gone123", "headdef456", repo=repo)
 
 
 def _content_file(text: str, encoding: str = "base64") -> SimpleNamespace:
