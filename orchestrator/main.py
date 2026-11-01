@@ -31,7 +31,12 @@ from orchestrator.memory import (
     load_memory,
     save_memory,
 )
-from orchestrator.recheck import build_rechecker, recheck_findings, skip_unchanged
+from orchestrator.recheck import (
+    apply_outcomes,
+    build_rechecker,
+    recheck_findings,
+    skip_unchanged,
+)
 
 load_dotenv()
 
@@ -293,15 +298,16 @@ def _recheck_previous(
 ) -> tuple[ReviewState, PRContext]:
     """Bring previous findings up to date with the head code.
 
-    Returns the state and context with the updated findings. Two stages,
+    Returns the state and context with the updated findings. Three stages,
     cheapest first (see ``orchestrator/recheck.py``):
 
     1. Skip check, no LLM: a finding whose file is unchanged keeps its
        status; one whose file was deleted is resolved; a renamed file's
        findings follow the new name.
     2. Re-check agent, one LLM call per finding whose file changed: is the
-       defect still there? Its outcomes are logged but not applied to
-       statuses yet; that is Step 9 Task 3.
+       defect still there?
+    3. Apply: fixed → ``resolved``, back after a fix → ``reopened``; a
+       still-present finding whose code moved gets its new line.
     """
     skipped = skip_unchanged(state.findings, state.file_shas, context.changed_files)
     state = state.model_copy(update={"findings": skipped.findings})
@@ -325,10 +331,14 @@ def _recheck_previous(
     )
     outcomes = recheck_findings(skipped.to_recheck, texts, context, recheck_agent)
     flow.info(
-        "[agent] recheck_agent done — %d answered, %d kept their status",
+        "[agent] recheck_agent done — %d answered, %d unanswered (status kept)",
         len(outcomes),
         len(skipped.to_recheck) - len(outcomes),
     )
+
+    findings = apply_outcomes(skipped.findings, outcomes, texts)
+    state = state.model_copy(update={"findings": findings})
+    context = context.model_copy(update={"previous_findings": findings})
     return state, context
 
 

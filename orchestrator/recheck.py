@@ -1,6 +1,6 @@
 """Re-check of previous findings against the new code (design section 11).
 
-Each run, every previous finding that is still in play goes through two
+Each run, every previous finding that is still in play goes through these
 stages, cheapest first:
 
 1. ``skip_unchanged`` (no LLM) compares each finding's file blob SHA with
@@ -9,13 +9,15 @@ stages, cheapest first:
 2. ``recheck_findings`` (one LLM call per finding) shows the LLM the
    finding, the code it was reported on, and that code as it is now, and
    asks whether the defect is still there.
-
-Stage 2 answers yes/no; turning that into a status move is Step 9 Task 3.
+3. ``apply_outcomes`` (no LLM) turns each yes/no answer into a status
+   move through the lifecycle table: fixed → ``resolved``, back after a
+   fix → ``reopened``.
 
 Step 9 status:
 
 - ``skip_unchanged`` — done (Task 1).
 - ``recheck_findings`` — done (Task 2).
+- ``apply_outcomes`` — done (Task 3).
 """
 
 import logging
@@ -32,7 +34,7 @@ from models.finding import FindingStatus
 from models.pr_context import PRContext
 from models.recheck_verdict import RecheckVerdict
 from models.stored_finding import StoredFinding
-from orchestrator.memory import SNIPPET_CONTEXT_LINES, transition
+from orchestrator.memory import SNIPPET_CONTEXT_LINES, cut_snippet, transition
 
 logger = logging.getLogger("pr-reviewer.recheck")
 flow = logging.getLogger("pr-reviewer.flow")
@@ -44,6 +46,7 @@ __all__ = [
     "Rechecker",
     "SkipCheck",
     "WINDOW_LINES",
+    "apply_outcomes",
     "build_rechecker",
     "code_window",
     "file_diff",
@@ -415,3 +418,68 @@ def file_diff(diff: str, path: str) -> str:
         if in_section:
             kept.append(line)
     return "\n".join(kept)
+
+
+# --- Stage 3: apply the answers to the findings ----------------------------
+
+
+def apply_outcomes(
+    findings: list[StoredFinding],
+    outcomes: dict[str, RecheckOutcome],
+    file_texts: dict[str, str | None],
+) -> list[StoredFinding]:
+    """Return ``findings`` with each re-check outcome applied, in input order.
+
+    ``outcomes`` comes from ``recheck_findings``; findings without one are
+    returned unchanged. ``file_texts`` is the head content it was given.
+
+    Status moves, all through the lifecycle table (``transition``):
+
+    ===================  =============  ==============
+    status               defect is      becomes
+    ===================  =============  ==============
+    open / reopened      gone           resolved
+    resolved             present        reopened
+    anything else        —              unchanged
+    ===================  =============  ==============
+
+    A finding whose defect is still present follows its code: when the code
+    moved, ``line`` and ``snippet`` are updated together from the head file.
+    They must change together: ``locate_line`` reads the finding's position
+    inside the snippet from ``line``. A finding whose defect is gone keeps
+    both, since its snippet is the faulty code a later regression would
+    bring back.
+    """
+    updated: list[StoredFinding] = []
+    for finding in findings:
+        outcome = outcomes.get(finding.id)
+        if outcome is not None:
+            finding = _apply_one(finding, outcome, file_texts.get(finding.file))
+        updated.append(finding)
+    return updated
+
+
+def _apply_one(
+    finding: StoredFinding, outcome: RecheckOutcome, file_text: str | None
+) -> StoredFinding:
+    """Apply one outcome; see ``apply_outcomes`` for the rules."""
+    target = _status_after(finding.status, outcome.issue_present)
+    if target is not None:
+        flow.info("[status] %s %s → %s", finding.id, finding.status, target)
+        finding = transition(finding, target)
+
+    if outcome.issue_present and outcome.line != finding.line and file_text:
+        flow.info("[status] %s moved line %d → %d", finding.id, finding.line, outcome.line)
+        finding = finding.model_copy(
+            update={"line": outcome.line, "snippet": cut_snippet(file_text, outcome.line)}
+        )
+    return finding
+
+
+def _status_after(status: FindingStatus, issue_present: bool) -> FindingStatus | None:
+    """The status a re-check answer moves a finding to, or None to keep it."""
+    if issue_present and status is FindingStatus.RESOLVED:
+        return FindingStatus.REOPENED
+    if not issue_present and status in (FindingStatus.OPEN, FindingStatus.REOPENED):
+        return FindingStatus.RESOLVED
+    return None
