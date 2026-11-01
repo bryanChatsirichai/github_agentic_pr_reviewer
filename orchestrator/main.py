@@ -1,8 +1,9 @@
 """Entry point for the agentic PR reviewer.
 
-Pipeline: load memory → build PR context → run the logic reviewer → render
-findings into a ``🤖 AI Review`` comment → post it with the hidden state
-block (``save_memory``). Run as a module from the repo root:
+Pipeline (``run_review``): load memory → build PR context → re-check
+previous findings → run the logic reviewer → drop duplicates → file new
+findings → render them into a ``🤖 AI Review`` comment → post it with the
+hidden state block (``save_memory``). Run as a module from the repo root:
 ``python -m orchestrator.main``.
 """
 
@@ -20,6 +21,7 @@ from agents.reviewer_agents.parser import FindingParseError
 from clients.github import get_file_content, get_merge_base_sha, verify_connection
 from models.pr_context import PRContext
 from models.review_result import ReviewResult
+from models.review_state import ReviewState
 from models.stored_finding import KNOWN_ISSUE_STATUSES, StoredFinding
 from orchestrator.context_builder import build_context
 from orchestrator.memory import (
@@ -29,6 +31,7 @@ from orchestrator.memory import (
     load_memory,
     save_memory,
 )
+from orchestrator.recheck import build_rechecker, recheck_findings, skip_unchanged
 
 load_dotenv()
 
@@ -155,41 +158,65 @@ def _files_section(files: list[str], inline_limit: int = 10) -> str:
 
 
 def run_review(pr_number: int) -> ReviewResult | None:
-    """Full review pass for one PR: context → reviewer → comment on GitHub.
+    """Review one PR and post the result as a comment carrying the new state.
 
-    Returns None, posting nothing, when there is nothing new to review
-    (``diff_mode == "noop"``).
+    A run takes one of three paths, decided by what changed since the last
+    posted review:
+
+    - **Nothing new** (``diff_mode == "noop"``): the head was already
+      reviewed (e.g. "Re-run job"), or the new commits touch no file still
+      in the PR. No agent runs, nothing is posted, returns None.
+    - **New code, no previous finding in a changed file**: first review,
+      or the edits are elsewhere. Only the reviewer agent runs. Findings in
+      untouched files keep their status; findings in deleted files are
+      resolved without an LLM.
+    - **New code touching a file with a previous finding**: the re-check
+      agent runs once per such finding ("is it still there?"), then the
+      reviewer agent runs as above.
+
+    The re-check agent never runs alone: whenever there is new code, the
+    reviewer looks at it for new issues, since a fix can introduce one.
+
+    Raises whatever the config, GitHub and LLM layers raise; ``main``
+    turns those into exit 1. Nothing is posted on failure, so the state
+    is not saved either.
     """
-    # Config errors (missing provider/key) raise RuntimeError here, before
-    # any GitHub write — fail fast rather than half way through a review.
+    # Config errors (missing provider/key) raise here, before any GitHub
+    # write: fail fast rather than half way through a review.
     provider, model = resolve_model()
     flow.info("[config] provider=%s model=%s", provider, model)
 
-    # State from the bot's last review comment (empty → full review).
+    # 1. Memory: the state block from the bot's last review comment. Empty
+    #    on the first review, which makes the diff full and IDs start at F001.
     state = load_memory(pr_number)
 
-    # The state picks the diff (full / incremental / noop); the reviewer
-    # also sees what was already reported so it doesn't repeat it.
-    context = build_context(pr_number, state).model_copy(
-        update={"previous_findings": state.findings}
-    )
-
-    # Nothing new since the last posted review (e.g. "Re-run job"): stop
-    # before the LLM call and post nothing. reviewed_sha stays put.
+    # 2. Context: PR data from GitHub. The state decides whether the diff is
+    #    the whole PR, only the commits since the last review, or nothing.
+    context = build_context(pr_number, state)
     if context.diff_mode == "noop":
+        # reviewed_sha stays put, so the next run's range still covers any
+        # commits that were skipped here.
         flow.info("[route] noop — no new commits since last review")
         return None
 
-    reviewer = build_reviewer("logic-reviewer")
-    result = reviewer.review(context)
+    head_files = _HeadFiles(context.head_sha)
+
+    # 3. Previous findings: brought up to date before the reviewer runs, so
+    #    it sees their current statuses and file names and does not repeat
+    #    them.
+    state, context = _recheck_previous(state, context, head_files)
+
+    # 4. Review: the reviewer agent looks at the diff for new issues.
+    reviewer_agent = build_reviewer("logic-reviewer")
+    result = reviewer_agent.review(context)
     flow.info(
         "[review] %d finding(s), rating=%s",
         len(result.findings),
         result.overall_rating,
     )
 
-    # The prompt asks the reviewer not to repeat known issues; this enforces
-    # it, before any ID is handed out.
+    # 5. Dedupe: the prompt asks the reviewer not to repeat known issues;
+    #    this enforces it before any ID is handed out.
     new_findings = drop_duplicates(state.findings, result.findings)
     flow.info(
         "[dedupe] %d duplicate(s) dropped, %d new",
@@ -197,10 +224,9 @@ def run_review(pr_number: int) -> ReviewResult | None:
         len(new_findings),
     )
 
-    # Snippets come from the head file, fetched once per file with findings
-    # (dict.fromkeys keeps order and drops repeats).
-    paths = dict.fromkeys(f.file for f in new_findings)
-    file_texts = {p: get_file_content(p, ref=context.head_sha) for p in paths}
+    # 6. File: new findings get the next IDs and a snippet cut from the head
+    #    file, which a later re-check compares against.
+    file_texts = head_files.get([f.file for f in new_findings])
     filed, state = file_new_findings(state, new_findings, file_texts)
     flow.info("[file] %s", ", ".join(f.id for f in filed) or "nothing to file")
     # Show the stored IDs and lines, not the LLM's own, so the visible
@@ -214,10 +240,81 @@ def run_review(pr_number: int) -> ReviewResult | None:
         }
     )
 
-    # Record which code this review covers; Step 8 diffs from here and
-    # Step 9 skips files whose blob is unchanged. A file without a blob SHA
-    # (if GitHub ever sends none) is left out rather than failing the run.
-    state = state.model_copy(
+    # 7. Post: posting is saving. The comment carries the state block, so a
+    #    failed post records nothing and the next run starts from the old
+    #    state.
+    #      context: the PR info, built at the start of the run
+    #      result:  this run's new findings, after dedupe and the ID rewrite
+    #      state:   everything to remember for the next run
+    state = _record_reviewed_code(state, context)
+    save_memory(pr_number, render_comment(context, result), state)
+    return result
+
+
+class _HeadFiles:
+    """Head file texts, fetched from GitHub at most once per run.
+
+    The re-check and the snippets of new findings often need the same
+    file. Values are as ``get_file_content`` returns them: None when the
+    file is missing at head, a directory, or too large.
+    """
+
+    def __init__(self, head_sha: str) -> None:
+        self._head_sha = head_sha
+        self._texts: dict[str, str | None] = {}
+
+    def get(self, paths: list[str]) -> dict[str, str | None]:
+        """Return ``{path: text}`` for ``paths``, fetching only unseen ones."""
+        for path in paths:
+            if path not in self._texts:
+                self._texts[path] = get_file_content(path, ref=self._head_sha)
+        return {path: self._texts[path] for path in paths}
+
+
+def _recheck_previous(
+    state: ReviewState, context: PRContext, head_files: _HeadFiles
+) -> tuple[ReviewState, PRContext]:
+    """Bring previous findings up to date with the head code.
+
+    Returns the state and context with the updated findings. Two stages,
+    cheapest first (see ``orchestrator/recheck.py``):
+
+    1. Skip check, no LLM: a finding whose file is unchanged keeps its
+       status; one whose file was deleted is resolved; a renamed file's
+       findings follow the new name.
+    2. Re-check agent, one LLM call per finding whose file changed: is the
+       defect still there? Its outcomes are logged but not applied to
+       statuses yet; that is Step 9 Task 3.
+    """
+    skipped = skip_unchanged(state.findings, state.file_shas, context.changed_files)
+    state = state.model_copy(update={"findings": skipped.findings})
+    context = context.model_copy(update={"previous_findings": skipped.findings})
+    flow.info(
+        "[skip-check] %d finding(s) to re-check: %s",
+        len(skipped.to_recheck),
+        ", ".join(f.id for f in skipped.to_recheck) or "none",
+    )
+
+    if skipped.to_recheck:
+        texts = head_files.get([f.file for f in skipped.to_recheck])
+        recheck_agent = build_rechecker()
+        recheck_findings(skipped.to_recheck, texts, context, recheck_agent)
+    return state, context
+
+
+def _record_reviewed_code(state: ReviewState, context: PRContext) -> ReviewState:
+    """Return ``state`` stamped with the code this review covered.
+
+    The next run reads these back: Step 8 diffs from ``reviewed_sha`` and
+    checks ``base_ref`` / ``base_merge_sha`` to see if an incremental diff
+    is safe; the skip check compares ``file_shas`` to find changed files.
+
+    ``file_shas`` leaves out a file without a blob SHA (if GitHub ever
+    sends none) rather than failing the run, and deleted files: GitHub
+    reports those with their old blob SHA, which would make them look
+    present and unchanged.
+    """
+    return state.model_copy(
         update={
             "reviewed_sha": context.head_sha,
             "base_ref": context.base_branch,
@@ -225,18 +322,12 @@ def run_review(pr_number: int) -> ReviewResult | None:
                 context.base_branch, context.head_sha
             ),
             "file_shas": {
-                f["filename"]: f["sha"] for f in context.changed_files if f.get("sha")
+                f["filename"]: f["sha"]
+                for f in context.changed_files
+                if f.get("sha") and f.get("status") != "removed"
             },
         }
     )
-
-    # Posting is saving: the comment carries the state block, so a failed
-    # post records nothing — the next run then starts from the old SHAs.
-    #   context: the PR info, built at the start of the run
-    #   result:  this run's new findings, after the duplicate check and ID rewrite
-    #   state:   everything to remember for the next run
-    save_memory(pr_number, render_comment(context, result), state)
-    return result
 
 
 def main(argv: list[str] | None = None) -> int:
