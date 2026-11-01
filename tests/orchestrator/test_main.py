@@ -13,7 +13,9 @@ import clients.github as github_client
 import orchestrator.main as main_module
 from agents.reviewer_agents.parser import FindingParseError
 from models.context_summary import ContextSummary
+from models.explanation_verdict import ExplanationVerdict
 from models.finding import FindingStatus
+from models.recheck_verdict import RecheckVerdict
 from models.review_result import ReviewResult
 from models.review_state import ReviewState
 from orchestrator.main import main, parse_args, render_comment
@@ -45,6 +47,14 @@ def stub_review(monkeypatch):
     monkeypatch.setattr(main_module, "build_context", lambda pr, state: make_context())
     monkeypatch.setattr(main_module, "get_file_content", lambda path, ref: "line\n" * 20)
     monkeypatch.setattr(main_module, "get_merge_base_sha", lambda base, head: "mergebase789")
+    monkeypatch.setattr(main_module, "get_pr_comments", lambda pr: [])
+    monkeypatch.setattr(
+        main_module,
+        "build_rechecker",
+        lambda: SimpleNamespace(
+            recheck=lambda message: RecheckVerdict(issue_present=True, reason="still there")
+        ),
+    )
     monkeypatch.setattr(
         main_module,
         "build_reviewer",
@@ -170,6 +180,154 @@ def test_main_records_the_reviewed_code_in_the_state(monkeypatch, stub_review) -
     # Replaced, not merged: files no longer in the PR drop out.
     assert state.file_shas == {"src/cli.py": "blob-new"}
     assert merge_base_calls == [("main", "headdef456")]
+
+
+def test_main_leaves_deleted_files_out_of_file_shas(monkeypatch, stub_review) -> None:
+    # GitHub reports a deleted file with its old blob SHA; storing it would
+    # make the file look present and unchanged to the next skip check.
+    files = [
+        {"filename": "src/cli.py", "sha": "blob-new", "status": "modified"},
+        {"filename": "src/old.py", "sha": "blob-old", "status": "removed"},
+    ]
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=files)
+    )
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+    assert parse_state_block(stub_review["body"]).file_shas == {"src/cli.py": "blob-new"}
+
+
+def test_main_resolves_findings_in_deleted_files(monkeypatch, stub_review) -> None:
+    # src/cli.py holds the stored F001; deleting it resolves F001 before the
+    # reviewer runs, and both the reviewer and the comment see that.
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: earlier_review())
+    files = [{"filename": "src/cli.py", "sha": "blob111", "status": "removed"}]
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=files)
+    )
+    seen = {}
+    monkeypatch.setattr(
+        main_module,
+        "build_reviewer",
+        lambda name: SimpleNamespace(
+            review=lambda ctx: seen.update(previous=ctx.previous_findings)
+            or ReviewResult(overall_rating="approve", findings=[])
+        ),
+    )
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+
+    assert [f.status for f in seen["previous"]] == [FindingStatus.RESOLVED]
+    stored = parse_state_block(stub_review["body"]).findings
+    assert [(f.id, f.status) for f in stored] == [("F001", FindingStatus.RESOLVED)]
+    assert "**F001**" in stub_review["body"] and "resolved" in stub_review["body"]
+
+
+def test_main_rechecks_only_findings_in_changed_files(monkeypatch, stub_review) -> None:
+    findings = [
+        make_stored_finding(id="F001", file="src/cli.py"),
+        make_stored_finding(id="F002", file="src/cli.py", line=5),
+        make_stored_finding(id="F003", file="src/fibonacci.py"),
+    ]
+    state = make_review_state(reviewed_sha="oldsha0001", findings=findings, next_id=4)
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: state)
+    files = [
+        {"filename": "src/cli.py", "sha": "blob-new", "status": "modified"},
+        {"filename": "src/fibonacci.py", "sha": "blob222", "status": "modified"},
+    ]
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=files)
+    )
+    fetched, asked = [], []
+    monkeypatch.setattr(
+        main_module,
+        "get_file_content",
+        lambda path, ref: fetched.append(path) or "line\n" * 20,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "build_rechecker",
+        lambda: SimpleNamespace(recheck=lambda message: asked.append(message) or None),
+    )
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+
+    # F001 + F002 share the changed cli.py; F003's fibonacci.py is unchanged.
+    assert len(asked) == 2
+    assert all("src/fibonacci.py" not in m for m in asked)
+    assert fetched == ["src/cli.py"]  # once, for both findings
+
+
+def test_main_resolves_a_fixed_finding_in_state_and_comment(monkeypatch, stub_review) -> None:
+    # F001's file changed and the re-check says the defect is gone.
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: earlier_review())
+    files = [{"filename": "src/cli.py", "sha": "blob-new", "status": "modified"}]
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=files)
+    )
+    monkeypatch.setattr(
+        main_module,
+        "build_rechecker",
+        lambda: SimpleNamespace(
+            recheck=lambda message: RecheckVerdict(issue_present=False, reason="fixed")
+        ),
+    )
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+
+    stored = parse_state_block(stub_review["body"]).findings
+    assert stored[0].id == "F001" and stored[0].status is FindingStatus.RESOLVED
+    assert "**F001**" in stub_review["body"] and "resolved" in stub_review["body"]
+
+
+def _reply(author: str, association: str) -> dict:
+    return {
+        "id": 900,
+        "body": "F001: false positive — argv is checked by the caller",
+        "created_at": "2026-11-01T10:00:00+00:00",
+        "author": author,
+        "author_association": association,
+    }
+
+
+def test_main_rejects_a_finding_a_collaborator_explained(monkeypatch, stub_review) -> None:
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: earlier_review())
+    monkeypatch.setattr(
+        main_module, "get_pr_comments", lambda pr: [_reply("alice", "COLLABORATOR")]
+    )
+    judged = []
+    monkeypatch.setattr(
+        main_module,
+        "build_explanation_judge",
+        lambda: SimpleNamespace(
+            judge=lambda message: judged.append(message)
+            or ExplanationVerdict(accepted=True, reason="caller checks argv")
+        ),
+    )
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+
+    assert len(judged) == 1 and "@alice (COLLABORATOR)" in judged[0]
+    stored = parse_state_block(stub_review["body"]).findings[0]
+    assert (stored.id, stored.status, stored.rejected_by) == (
+        "F001", FindingStatus.REJECTED, "developer"
+    )
+    assert "rejected (developer)" in stub_review["body"]
+
+
+def test_main_ignores_an_explanation_from_an_outsider(monkeypatch, stub_review) -> None:
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: earlier_review())
+    monkeypatch.setattr(
+        main_module, "get_pr_comments", lambda pr: [_reply("stranger", "NONE")]
+    )
+
+    def must_not_judge():
+        raise AssertionError("an outsider's reply must not reach the judge")
+
+    monkeypatch.setattr(main_module, "build_explanation_judge", must_not_judge)
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+    assert parse_state_block(stub_review["body"]).findings[0].status is FindingStatus.OPEN
 
 
 def test_main_reviews_against_the_loaded_state(monkeypatch, stub_review) -> None:
