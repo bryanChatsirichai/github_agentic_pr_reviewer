@@ -154,7 +154,7 @@ tests/orchestrator/test_context_builder.py   # (originally tests/ — moved in S
 
 ### [x] Step 4 — First LLM review (no memory, no graph)
 
-**Goal:** The first implementation loop (design section 28): PR → LLM → comment.
+**Goal:** The first implementation loop: PR → LLM → comment.
 
 **Depends on:** Step 3.
 
@@ -171,7 +171,7 @@ orchestrator/memory.py     # no-op stub only, keeps the main flow shape final
 Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 
 **Tasks:**
-1. Finding model: id, status, severity, file, line, title, description, confidence — plus the status enum from design section 11.
+1. Finding model: id, status, severity, file, line, title, description, confidence — plus the status enum from design section 6.3.
 2. `agents/reviewer_agents/factory.py`: `build_reviewer(name)` → model + system prompt loaded from the `.md` file, no tools yet.
 3. Prompt: paste PR context and require **structured JSON findings output** matching the Finding model.
 4. Parse and validate LLM output into `list[Finding]` (reject/repair malformed JSON, one retry).
@@ -210,7 +210,7 @@ Also adds `langchain` / `langchain-core` via `uv add langchain langchain-core`.
 
 **Depends on:** Step 4 (for the Finding model shape).
 
-**Storage decision (2026-10-25):** a local `memory/pr-<n>.json` does not survive between Actions runs (fresh runner; `memory/` is gitignored), and the reusable workflow runs in other people's repos. Rejected alternatives: committing state to the repo / an orphan branch (needs `contents: write` on callers' repos), `actions/cache` (evicted after 7 days unused, 10 GB/repo cap, scoped to `refs/pull/N/merge`), artifacts (90-day default retention, awkward lookup of the previous run). State therefore lives in the bot's own PR comments — no extra infra or permissions. See design section 10.
+**Storage decision (2026-10-25):** a local `memory/pr-<n>.json` does not survive between Actions runs (fresh runner; `memory/` is gitignored), and the reusable workflow runs in other people's repos. Rejected alternatives: committing state to the repo / an orphan branch (needs `contents: write` on callers' repos), `actions/cache` (evicted after 7 days unused, 10 GB/repo cap, scoped to `refs/pull/N/merge`), artifacts (90-day default retention, awkward lookup of the previous run). State therefore lives in the bot's own PR comments — no extra infra or permissions. See design section 6.2.
 
 **Creates:**
 
@@ -226,7 +226,7 @@ tests/orchestrator/memory/test_memory.py   # (originally tests/ — moved in Ste
 2. `render_state_block(state)` → `<!-- ai-review-state:v1 {json} -->` appended to the comment body. After `json.dumps`, escape `<`/`>` as `<`/`>` (still valid JSON) so a snippet containing `-->` cannot close the HTML comment early. Cap the block at ~20k chars (comment bodies max out at 65,536), dropping the oldest `closed`/`rejected` findings first.
 3. `load_memory(pr_number)` scans issue comments newest-first and returns the first one that (a) is authored by the configured bot login (default `github-actions[bot]`), (b) contains `MARKER`, and (c) has a state block that passes pydantic validation. A corrupt newest block falls back to an older valid one (so IDs don't restart at F001); none found → empty state (= full review). Treat the parsed state as untrusted.
 4. `save_memory` is not a separate write: state is saved only by a successful `post_review_comment` that carries the block.
-5. Finding lifecycle as an explicit allowed-moves table (design section 11): `new→open`, `open→resolved|rejected`, `resolved→reopened|verified`, `reopened→resolved|rejected`, `verified→closed`; illegal transition raises. `rejected_by: critic | developer` records who rejected it.
+5. Finding lifecycle as an explicit allowed-moves table (design section 6.3): `new→open`, `open→resolved|rejected`, `resolved→reopened|verified`, `reopened→resolved|rejected`, `verified→closed`; illegal transition raises. `rejected_by: critic | developer` records who rejected it.
 6. Finding ID generator (`F001`, `F002`, …) continuing from `next_id`.
 
 **Done when:** Unit tests cover round-trip through a rendered comment body, a snippet containing `-->` surviving, another `github-actions[bot]` comment without a state block being skipped, a corrupt newest block falling back to an older one, all legal transitions, rejection of illegal ones, ID continuation, and `cut_snippet` (window, clamping at file ends, line past EOF, CRLF). No LLM or real GitHub involved.
@@ -252,13 +252,13 @@ agents/reviewer_agents/prompts/logic-reviewer.md   # gains a "previous findings"
 1. Main flow: `load_memory` → include previous findings in the reviewer prompt → new findings appended (`new→open`) → state block written into the posted comment. When filing a new finding, fill its `snippet` with `cut_snippet` (Step 6) on the head file, fetched by a new client fn `get_file_content(path, ref=head_sha)` — once per file with findings, not per changed file. This must ship with Step 7: findings saved with an empty snippet can never be re-checked properly by Step 9.
 2. Reviewer prompt gains a "previous findings" section (ID, file, line, title, status) with instruction: do not re-report an issue already listed. The reviewer does **not** output status verdicts for previous findings — that is Step 9's dedicated re-check. In Step 7 previous findings are carried forward with their stored status.
 3. Dedupe reviewer output against stored findings before assigning new IDs — otherwise every full-diff fallback re-reports old issues under new IDs. A reviewer finding is a duplicate of a stored one when it is in the same file and either (a) the normalised titles are equal (lowercase, punctuation stripped, whitespace collapsed), or (b) the line is within ±3 of the stored line **and** the titles are similar (`difflib.SequenceMatcher` ratio ≥ 0.6). Snippets are not compared: the snippet is cut around whatever line the LLM reports, so a 2-line drift breaks an exact match. Line proximity alone is not enough either — two different issues on adjacent lines must not merge, since hiding a real finding is worse than a duplicate. Rewordings at a drifted line will still slip through; accept that for the prototype (Step 14's merge revisits dedupe).
-4. Comment rendering shows two sections: "Previous findings" and "New findings" (design section 14 output shape).
+4. Comment rendering shows two sections: "Previous findings" and "New findings" (design section 8.4 output shape).
 5. `reviewed_sha` / `base_merge_sha` / `file_shas` updated in the state after each successful post. Two client changes:
    - `get_pr_files` returns each file's blob `sha` (it currently doesn't) → `file_shas`.
    - New `get_merge_base_sha(base_ref, head_sha)` → `repo.compare(base_ref, head_sha).merge_base_commit.sha` → `base_merge_sha`. (Step 8 reuses the same compare call for its decision rule.)
 
    `reopened` events take the same stateful path as `synchronize` (comments survive while the PR is closed; the head may have moved).
-6. Skip posting when `head_sha == reviewed_sha` (job re-run at the same SHA) — log it and exit 0 without posting. This is the **only** skip rule in Step 7. The design section 19 rule "no status changed and no new findings → don't post" moves to Step 9: without a re-check pass no status can change, so applying it here would suppress every follow-up comment that has no new findings (including the one the Done-when check below needs).
+6. Skip posting when `head_sha == reviewed_sha` (job re-run at the same SHA) — log it and exit 0 without posting. This is the **only** skip rule in Step 7.
 
 **Done when:**
 - Unit tests (mocked client, no LLM): `get_file_content`, `get_merge_base_sha`, and the `sha` field in `get_pr_files`; dedupe — exact-title match, near-line similar-title match, adjacent-line different-title *not* merged, different-file *not* merged; new findings get continuing IDs and a non-empty snippet; same-SHA run posts nothing; state SHAs updated after a post.
@@ -337,19 +337,44 @@ Bot finding F001 on this PR (an identical head skips the merge-base check) was c
 
 ```text
 agents/reviewer_agents/prompts/recheck.md
-orchestrator/recheck.py
+agents/reviewer_agents/prompts/explanation-judge.md   # Task 4
+agents/structured.py                  # ask_structured: one structured question, retried once
+models/recheck_verdict.py             # RecheckVerdict {issue_present, reason}
+models/explanation_verdict.py         # ExplanationVerdict {accepted, reason}
+orchestrator/recheck.py               # Tasks 1–3
+orchestrator/explanations.py          # Task 4
 tests/orchestrator/test_recheck.py
+tests/orchestrator/test_explanations.py
 ```
+(Plus edits: `clients/github.py` gains `file_exists` and `get_pr_comments`; `memory.py` gains `resolve_bot_login`; `StoredFinding` gains `explained_by` and `rejection_reason`; `main.py` gains the re-check and explanation steps.)
+
+Every run with new code posts a fresh summary comment, so the latest bot comment always matches the latest commit and is the one place a reader needs to look. Step 8's `noop` (no new code → no post) still applies.
 
 **Tasks:**
 1. Skip check (works in every diff mode): compare each finding's file blob SHA against `state.file_shas`. Unchanged → status kept, no LLM call. File deleted → `resolved` ("code removed"). Follow `previous_filename` for renames. First, stop `run_review` from writing `status == "removed"` files into `file_shas` (found in the Step 7 verification). Otherwise a deleted file looks present, carrying its old blob SHA, and this check never fires.
-2. Dedicated re-check agent call for open, reopened **and resolved** findings whose file changed (resolved ones are needed to catch regressions): given the finding + stored snippet + current head file content (`get_file_content(path, ref)`, added in Step 7) + incremental diff, output `resolved | still_open | reopened` + one-line justification. Lines above a finding may have been added or removed, so locate the stored snippet near the old `line` rather than cutting at exactly that line. `still_open` is a verdict, not a status — the finding keeps its current status. The re-check never outputs a dismissal.
-3. Apply transitions through the Step 6 lifecycle table; a finding whose problem reappears goes `resolved → reopened`.
-4. Developer explanations: read human issue comments created after the last valid state comment that mention a finding ID (`F\d{3}`). Accept only from the PR author or `author_association` OWNER / MEMBER / COLLABORATOR; pass the text to the LLM as untrusted data. A justification the LLM accepts → `rejected` with `rejected_by=developer`, acknowledged in the next comment.
-5. Comment format from design section 14: previous findings with ✅/🟡 markers, then new findings. The "Overall" rating must take still-open previous findings into account. Today it rates only the new findings, so a comment can say `approve` next to open medium findings.
-6. Comment strategy (design section 19, moved here from Step 7 because only now can statuses change): skip posting when no status changed and there are no new findings — `reviewed_sha` then stays put and the next run's range covers it. Otherwise post a new summary comment. This is in addition to Step 8's `noop`, which replaced Step 7's same-SHA skip. Inline review threads come in Step 9b; state storage and re-check logic don't change for them.
 
-**Done when:** Full scenario test on a real PR: commit 1 plants F001 → commit 2 fixes it (F001 → resolved in state + comment) → commit 3 reintroduces it (F001 → reopened). Plus: a collaborator's "F00x: intentional because …" reply leads to `rejected (developer)`; the same reply from a non-collaborator is ignored. This is design section 11 proven end-to-end.
+   **Done (2026-11-01):** `skip_unchanged` in `orchestrator/recheck.py` returns the updated findings plus the ones that need the LLM. A file that left the PR entirely (added then deleted, or all changes reverted) goes to the re-check rather than being resolved, since only the head file can tell those apart. `run_review` no longer stores removed files in `file_shas`.
+2. Dedicated re-check agent call for open, reopened **and resolved** findings whose file changed (resolved ones are needed to catch regressions): given the finding + stored snippet + current head file content (`get_file_content(path, ref)`, added in Step 7) + this file's part of the diff. Lines above a finding may have been added or removed, so locate the stored snippet near the old `line` rather than cutting at exactly that line. The re-check never outputs a dismissal.
+
+   **Done (2026-11-01):** `recheck_findings` makes one call per finding (prompt `recheck.md`). Changed from the plan: the LLM answers yes/no (`issue_present` + reason) instead of `resolved | still_open | reopened`. The three-word form allowed answers that make no sense for the current status (`reopened` for an open finding would raise in the lifecycle table; `still_open` for a resolved one is unclear), so the status move is worked out in code (Task 3). `locate_line` slides the stored snippet over the head file (indentation ignored, `difflib` ratio ≥ 0.6, nearest match wins, stops at the first exact match; ~0.07 s on a 10,000-line file). The LLM sees ~60 numbered lines around the located line. A file gone from head and from the PR resolves without a call; a file that exists but is unreadable (directory, over 1 MB) keeps its status — `clients.github.file_exists` tells those apart when the file is outside the PR (bot finding F001 on the Step 9 PR). An unusable reply twice keeps the status and does not fail the run.
+3. Apply transitions through the Step 6 lifecycle table; a finding whose problem reappears goes `resolved → reopened`.
+
+   **Done (2026-11-01):** `apply_outcomes`: open/reopened + gone → `resolved`; resolved + present → `reopened`; anything else unchanged. A still-present finding whose code moved gets its new `line` **and** a fresh `snippet` together — `locate_line` reads the finding's position inside the snippet from `line`, so updating one without the other would mislocate the next search. A resolved finding keeps its old snippet: that is the faulty code a regression would bring back.
+4. Developer explanations: read human issue comments created after the last valid state comment that mention a finding ID (`F\d{3}`). Accept only from the PR author or `author_association` OWNER / MEMBER / COLLABORATOR; pass the text to the LLM as untrusted data. A justification the LLM accepts → `rejected` with `rejected_by=developer`, acknowledged in the next comment.
+
+   **Done (2026-11-01):** `orchestrator/explanations.py`, run after the re-check so a finding that was just resolved is not judged. Comments are only fetched when some finding is `open` or `reopened` (the lifecycle table has no `resolved → rejected`). The cutoff is the bot's newest comment with a valid state block — the same rule `load_memory` uses, via the shared `resolve_bot_login`. A separate explanation judge (prompt `explanation-judge.md`) makes one call per explained finding; replies are capped at 2,000 chars and fenced so they cannot pose as prompt sections. An accepted explanation also stores who explained it (`explained_by`) and the judge's reason (`rejection_reason`, ≤ 300 chars) for the comment. A reply alone does not start a run; it is read on the next push.
+5. Comment format from design section 8.4: previous findings with status markers, then new findings. The "Overall" rating must take still-open previous findings into account. Today it rates only the new findings, so a comment can say `approve` next to open medium findings.
+
+   **Partly done (2026-11-01):** markers and plain-English labels are in — 🟡 open, ✅ fixed, 🔁 reopened (came back after a fix), 💬 dismissed (developer explained) with an `explained by` line (login in a code span, not an `@` mention, so nobody is notified on every review). **Still to do:** the "Overall" rating, and escaping Markdown in the shown rejection reason (bot finding F005 on the Step 9 PR).
+
+**Done when:** Full scenario test on a real PR: commit 1 plants F001 → commit 2 fixes it (F001 → resolved in state + comment) → commit 3 reintroduces it (F001 → reopened). Plus: a collaborator's "F00x: intentional because …" reply leads to `rejected (developer)`; the same reply from a non-collaborator is ignored. This is design section 6.3 proven end-to-end.
+
+**Verification so far (2026-11-01):** `uv run pytest` — 292 passed, offline. Live on the Step 9 PR (branch `step-9/finding-recheck-pass`):
+
+- [x] Fix → resolved: bot finding F001 went `open → resolved` (shown `✅ fixed`) on the push that fixed it.
+- [x] Collaborator explanation → dismissed: F002–F004 were explained in PR comments and all three went to `rejected (developer)`.
+- [ ] Regression → reopened: not yet tried live.
+- [ ] Non-collaborator reply ignored: not yet tried live (covered offline by `test_main_ignores_an_explanation_from_an_outsider`).
 
 ---
 
@@ -365,7 +390,7 @@ tests/orchestrator/test_recheck.py
 
 **Tasks:**
 1. Only posting and thread tracking change; the state block and re-check logic from Steps 6–9 stay as they are.
-2. Post via `pr.create_review(commit, body, event="COMMENT", comments=[{path, line, side, body}])`: the summary + state block goes in the review body, each finding becomes an inline comment. `event="COMMENT"` only — `APPROVE`/`REQUEST_CHANGES` from `github-actions[bot]` is gated by the repo setting "Allow GitHub Actions to create and approve pull requests" (off by default), and humans approve (design section 25).
+2. Post via `pr.create_review(commit, body, event="COMMENT", comments=[{path, line, side, body}])`: the summary + state block goes in the review body, each finding becomes an inline comment. `event="COMMENT"` only — `APPROVE`/`REQUEST_CHANGES` from `github-actions[bot]` is gated by the repo setting "Allow GitHub Actions to create and approve pull requests" (off by default), and humans approve (design section 9.1).
 3. Before posting, check each finding's `file`/`line` against the PR patch hunks. GitHub rejects inline comments on lines outside the diff with a 422 error, and one bad comment fails the whole review. Findings that can't be placed are listed in the summary only.
 4. Store the inline comment id on the finding (`thread_id` in the state block).
 5. Map re-check outcomes to thread actions:
@@ -403,7 +428,7 @@ graph/__init__.py
 Also adds `langgraph` via `uv add langgraph`. `main.py` shrinks to: parse args → invoke the graph.
 
 **Tasks:**
-1. Nodes: `load_memory` → `build_diff` → `review` → `recheck` → `judge_placeholder` (passthrough) → `update_memory` → `post_review`.
+1. Nodes: `load_memory` → `build_diff` → `recheck` → `explain` → `review` → `judge_placeholder` (passthrough) → `update_memory` → `post_review`. `recheck` and `explain` come before `review` because Step 9 runs them first: the reviewer is shown the updated statuses and must not repeat dismissed or resolved findings.
 2. State = a typed dict wrapping `PRContext` + intermediate results.
 3. No behavior change — outputs identical to Step 9b's.
 
@@ -427,8 +452,8 @@ tools/__init__.py
 
 **Tasks:**
 1. Implement the git and repo tools as plain functions (MCP-able later).
-2. Bind tools to the reviewer via the agent factory; add the "use tools to verify before reporting" instruction from design section 24.
-3. Enforce `MAX_TOOL_CALLS` (design section 23) in the tool-binding loop.
+2. Bind tools to the reviewer via the agent factory; add a "use tools to verify before reporting" instruction to the reviewer prompts.
+3. Enforce `MAX_TOOL_CALLS` (design section 11.5) in the tool-binding loop.
 
 **Done when:** A test PR where the bug is only visible outside the diff (e.g., caller passes bad input defined in another file) gets correctly found — impossible without tools.
 
@@ -449,9 +474,9 @@ agents/reviewer_agents/prompts/critic.md
 
 **Tasks:**
 1. Critic node: for each finding, decide `confirmed | uncertain | rejected` + evidence note, using tools.
-2. Bounded loop (design section 23): `MAX_REVIEW_ITERATIONS = 3` — uncertain findings go back to the reviewer with the critic's doubt, at most N times.
+2. Bounded loop (design section 11.5): `MAX_REVIEW_ITERATIONS = 3` — uncertain findings go back to the reviewer with the critic's doubt, at most N times.
 3. Graph edge: after critic, route `has_uncertain and iterations_left → review` else `→ judge`.
-4. Rejected findings are kept in memory with status `rejected` (audit trail, design section 10) but not posted.
+4. Rejected findings are kept in memory with status `rejected` (audit trail, design section 6.3) but not posted.
 
 **Done when:** A PR with a plausible-but-false issue (e.g., "missing null check" where the caller already guarantees non-null — visible via tools) produces no GitHub comment but a `rejected` finding in memory with the evidence recorded.
 
@@ -472,7 +497,7 @@ agents/reviewer_agents/prompts/judge.md
 
 **Tasks:**
 1. Judge node: takes confirmed + uncertain findings, outputs final per-finding verdict + adjusted confidence.
-2. Confidence policy from design section 23 as config constants (`REPORT_THRESHOLD=0.90`, `SUGGESTION_THRESHOLD=0.75`).
+2. Confidence policy from design section 11.5 as config constants (`REPORT_THRESHOLD=0.90`, `SUGGESTION_THRESHOLD=0.75`).
 3. Rendering: ≥0.90 normal, 0.75–0.89 labeled "suggestion / needs verification", <0.75 silently recorded in memory only.
 4. Apply the policy to the inline threads from Step 9b: ≥0.90 posts a normal thread, 0.75–0.89 posts a thread labeled "suggestion / needs verification", <0.75 gets no thread (state only).
 
@@ -494,12 +519,12 @@ agents/reviewer_agents/prompts/testing-reviewer.md
 ```
 
 **Tasks:**
-1. Security + Testing reviewer prompts from design section 21 checklists.
+1. Security + Testing reviewer prompts from the design section 11.6 focus lists.
 2. Fan-out node: run all three reviewers (parallel or sequential — sequential is fine for the prototype, note the choice), tag findings with `source_reviewer`.
 3. Merge function: dedupe overlapping findings (same file+line+category) keeping the higher confidence.
 4. Re-check pass (Step 9) routes each previous finding back to its original reviewer.
 
-**Done when:** A PR containing one logic bug, one security issue (e.g., injection), and one missing test produces three findings from three different `source_reviewer` values in one review comment — the design section 18 "final prototype" experience.
+**Done when:** A PR containing one logic bug, one security issue (e.g., injection), and one missing test produces three findings from three different `source_reviewer` values in one review comment — the design section 11 target experience.
 
 ---
 
@@ -510,7 +535,7 @@ Deliberately out of scope until Step 14 is green:
 - Performance Reviewer (fourth agent)
 - MCP tool interface (tools are plain functions until this matters)
 - Testing tools that execute repo code (`npm test` etc.) — security review needed first
-- Reusable workflow / GitHub App for multi-repo (design section 7 progression Phase 3–4)
+- Reusable workflow / GitHub App for multi-repo (design section 4, deployment options)
 - SQLite/PostgreSQL memory
 - `/ai-review` commands, auto-fix, PR metrics
 
