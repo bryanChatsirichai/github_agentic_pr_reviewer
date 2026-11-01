@@ -27,6 +27,12 @@ Step 7:
   stored ones (IDs, ``new → open``, snippets).
 - ``drop_duplicates`` — done (Task 3): removes repeats of already-reported
   issues before IDs are handed out.
+
+Step 9:
+
+- ``resolve_bot_login`` — the one place the bot login is decided, shared
+  by ``load_memory`` and the developer-explanation filter, so both agree
+  on which comment holds the state.
 """
 
 import logging
@@ -71,6 +77,7 @@ __all__ = [
     "load_memory",
     "parse_state_block",
     "render_state_block",
+    "resolve_bot_login",
     "save_memory",
     "transition",
 ]
@@ -199,6 +206,12 @@ def parse_state_block(body: str) -> ReviewState | None:
         return None
 
 
+def resolve_bot_login(bot_login: str | None = None) -> str:
+    """The login whose comments carry state: ``bot_login``, else
+    ``$REVIEW_BOT_LOGIN``, else ``github-actions[bot]``."""
+    return bot_login or os.environ.get(BOT_LOGIN_ENV) or DEFAULT_BOT_LOGIN
+
+
 def load_memory(
     pr_number: int,
     *,
@@ -223,7 +236,7 @@ def load_memory(
     The result passed validation but came from an editable comment, so
     callers still treat it as untrusted data.
     """
-    login = bot_login or os.environ.get(BOT_LOGIN_ENV) or DEFAULT_BOT_LOGIN
+    login = resolve_bot_login(bot_login)
     comments = github.get_existing_review_comments(
         pr_number, repo=repo, client=client
     )

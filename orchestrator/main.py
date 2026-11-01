@@ -1,9 +1,24 @@
 """Entry point for the agentic PR reviewer.
 
-Pipeline (``run_review``): load memory → build PR context → re-check
-previous findings → run the logic reviewer → drop duplicates → file new
-findings → render them into a ``🤖 AI Review`` comment → post it with the
-hidden state block (``save_memory``). Run as a module from the repo root:
+Pipeline (``run_review``), with the flow-log tag each step writes, so a CI
+log line leads back to its step:
+
+====  ===========================  =====================================
+step  what                         log tags
+====  ===========================  =====================================
+1     load memory                  ``[memory]``
+2     build PR context, pick diff  ``[route]``, ``[exit]`` on noop
+3a    re-check previous findings   ``[skip-check]`` ``[recheck]`` ``[status]``
+3b    developer explanations       ``[explain]`` ``[status]``
+4     logic reviewer               ``[review]``
+5     drop duplicates              ``[dedupe]``
+6     file new findings            ``[file]``
+7     post comment + state block   ``[post]``, ``[exit]``
+====  ===========================  =====================================
+
+Every LLM agent built or skipped logs an ``[agent]`` line, and every
+status change a ``[status]`` line. ``main`` adds ``[start]``,
+``[github]``, ``[config]`` and the final ``[done]`` / ``[failed]``. Run as a module from the repo root:
 ``python -m orchestrator.main``
 """
 
@@ -18,17 +33,30 @@ from agents import llm
 from agents.llm import resolve_model
 from agents.reviewer_agents.factory import build_reviewer
 from agents.reviewer_agents.parser import FindingParseError
-from clients.github import get_file_content, get_merge_base_sha, verify_connection
+from clients.github import (
+    get_file_content,
+    get_merge_base_sha,
+    get_pr_comments,
+    verify_connection,
+)
 from models.pr_context import PRContext
 from models.review_result import ReviewResult
 from models.review_state import ReviewState
 from models.stored_finding import KNOWN_ISSUE_STATUSES, StoredFinding
 from orchestrator.context_builder import build_context
+from orchestrator.explanations import (
+    EXPLAINABLE_STATUSES,
+    apply_explanations,
+    build_explanation_judge,
+    collect_explanations,
+    developer_replies,
+)
 from orchestrator.memory import (
     StateTooLargeError,
     drop_duplicates,
     file_new_findings,
     load_memory,
+    resolve_bot_login,
     save_memory,
 )
 from orchestrator.recheck import (
@@ -179,8 +207,15 @@ def run_review(pr_number: int) -> ReviewResult | None:
       agent runs once per such finding ("is it still there?"), then the
       reviewer agent runs as above.
 
-    The re-check agent never runs alone: whenever there is new code, the
-    reviewer looks at it for new issues, since a fix can introduce one.
+    On either path with new code, the explanation judge also runs once per
+    open finding that the PR author or a collaborator has explained in a
+    comment since the last review ("F003: false positive because …"); an
+    accepted explanation dismisses the finding.
+
+    Neither the re-check agent nor the judge runs alone: whenever there is
+    new code, the reviewer looks at it for new issues, since a fix can
+    introduce one. A reply alone does not start a run (only PR events do),
+    so an explanation is read on the next push.
 
     Raises whatever the config, GitHub and LLM layers raise; ``main``
     turns those into exit 1. Nothing is posted on failure, so the state
@@ -210,10 +245,15 @@ def run_review(pr_number: int) -> ReviewResult | None:
 
     head_files = _HeadFiles(context.head_sha)
 
-    # 3. Previous findings: brought up to date before the reviewer runs, so
-    #    it sees their current statuses and file names and does not repeat
-    #    them.
+    # 3. Previous findings are brought up to date before the reviewer runs,
+    #    so it sees their current statuses and file names and does not
+    #    repeat them.
+    # 3a. Re-check: was it fixed (resolved), or did a fix come undone
+    #     (reopened)?
     state, context = _recheck_previous(state, context, head_files)
+    # 3b. Explanations: was it wrong in the first place (rejected)? After
+    #     3a, so a finding that was just resolved is not judged.
+    state, context = _apply_developer_explanations(pr_number, state, context, head_files)
 
     # 4. Review: the reviewer agent looks at the diff for new issues.
     reviewer_name = "logic-reviewer"
@@ -310,8 +350,7 @@ def _recheck_previous(
        still-present finding whose code moved gets its new line.
     """
     skipped = skip_unchanged(state.findings, state.file_shas, context.changed_files)
-    state = state.model_copy(update={"findings": skipped.findings})
-    context = context.model_copy(update={"previous_findings": skipped.findings})
+    state, context = _with_findings(state, context, skipped.findings)
     flow.info(
         "[skip-check] %d finding(s) to re-check: %s",
         len(skipped.to_recheck),
@@ -337,9 +376,61 @@ def _recheck_previous(
     )
 
     findings = apply_outcomes(skipped.findings, outcomes, texts)
-    state = state.model_copy(update={"findings": findings})
-    context = context.model_copy(update={"previous_findings": findings})
-    return state, context
+    return _with_findings(state, context, findings)
+
+
+def _apply_developer_explanations(
+    pr_number: int, state: ReviewState, context: PRContext, head_files: _HeadFiles
+) -> tuple[ReviewState, PRContext]:
+    """Dismiss findings a developer explained in a PR comment, if the judge agrees.
+
+    Returns the state and context with the updated findings. Comments are
+    only fetched when some finding could be dismissed (``open`` or
+    ``reopened``). See ``orchestrator/explanations.py`` for whose replies
+    count and why.
+    """
+    if not any(f.status in EXPLAINABLE_STATUSES for f in state.findings):
+        flow.info("[explain] no open finding to explain — comments not read")
+        return state, context
+
+    replies = developer_replies(
+        get_pr_comments(pr_number),
+        pr_author=context.author,
+        bot_login=resolve_bot_login(),
+    )
+    explanations = collect_explanations(replies, state.findings)
+    if not explanations:
+        flow.info(
+            "[explain] explanation judge not built — no trusted reply since the "
+            "last review names an open finding"
+        )
+        return state, context
+
+    texts = head_files.get([f.file for f in state.findings if f.id in explanations])
+    judge = build_explanation_judge()
+    flow.info(
+        "[agent] calling explanation judge for %d finding(s): %s",
+        len(explanations),
+        ", ".join(explanations),
+    )
+    findings = apply_explanations(state.findings, explanations, texts, judge)
+    return _with_findings(state, context, findings)
+
+
+def _with_findings(
+    state: ReviewState, context: PRContext, findings: list[StoredFinding]
+) -> tuple[ReviewState, PRContext]:
+    """Return ``state`` and ``context`` both holding ``findings``.
+
+    They must change together: the state is what gets saved, while
+    ``context.previous_findings`` is what the reviewer and the comment
+    show. Updating only one would post statuses that differ from the
+    saved ones.
+    """
+    return (
+        state.model_copy(update={"findings": findings}),
+        context.model_copy(update={"previous_findings": findings}),
+    )
 
 
 def _record_reviewed_code(state: ReviewState, context: PRContext) -> ReviewState:

@@ -26,11 +26,11 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from agents.llm import get_llm
-from clients import github
 from agents.reviewer_agents.factory import PROMPTS_DIR
+from agents.structured import ask_structured
+from clients import github
 from models.finding import FindingStatus
 from models.pr_context import PRContext
 from models.recheck_verdict import RecheckVerdict
@@ -158,7 +158,7 @@ class RecheckOutcome:
 
     issue_present: bool
 
-    #: One line, for the log and the next comment.
+    #: The LLM's one-line justification, whitespace collapsed for the log.
     reason: str
 
     #: Where the finding's code is now: the located line, or the stored
@@ -176,30 +176,10 @@ class Rechecker:
     def recheck(self, user_message: str) -> RecheckVerdict | None:
         """Ask about one finding. Returns None when no usable answer came back.
 
-        Retries once with the error fed back. Unlike the reviewer, a second
+        Retries once (``ask_structured``). Unlike the reviewer, a second
         failure does not fail the run: the finding just keeps its status.
         """
-        messages = [SystemMessage(self.system_prompt), HumanMessage(user_message)]
-        verdict, error = self._invoke(messages)
-        if verdict is None:
-            retry = HumanMessage(
-                f"Your previous reply could not be parsed as a JSON object "
-                f"with issue_present and reason: {error}. Respond again with "
-                f"ONLY the JSON object."
-            )
-            verdict, error = self._invoke(messages + [retry])
-        if verdict is None:
-            logger.warning("Re-check output unusable twice (%s)", error)
-        return verdict
-
-    def _invoke(self, messages: list[BaseMessage]) -> tuple[RecheckVerdict | None, str]:
-        """One structured LLM call. Returns ``(verdict, "")`` or ``(None, error)``."""
-        output = self.llm.with_structured_output(
-            RecheckVerdict, include_raw=True
-        ).invoke(messages)
-        if output["parsed"] is not None:
-            return output["parsed"], ""
-        return None, str(output["parsing_error"] or "no structured output")
+        return ask_structured(self.llm, self.system_prompt, user_message, RecheckVerdict)
 
 
 def build_rechecker() -> Rechecker:
