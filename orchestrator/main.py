@@ -196,7 +196,11 @@ def run_review(pr_number: int) -> ReviewResult | None:
     if context.diff_mode == "noop":
         # reviewed_sha stays put, so the next run's range still covers any
         # commits that were skipped here.
-        flow.info("[route] noop — no new commits since last review")
+        flow.info(
+            "[exit] nothing new to review — no agent called, nothing posted "
+            "(reviewed_sha stays %s)",
+            (state.reviewed_sha or "none")[:10],
+        )
         return None
 
     head_files = _HeadFiles(context.head_sha)
@@ -207,7 +211,14 @@ def run_review(pr_number: int) -> ReviewResult | None:
     state, context = _recheck_previous(state, context, head_files)
 
     # 4. Review: the reviewer agent looks at the diff for new issues.
-    reviewer_agent = build_reviewer("logic-reviewer")
+    reviewer_name = "logic-reviewer"
+    reviewer_agent = build_reviewer(reviewer_name)
+    flow.info(
+        "[agent] calling reviewer_agent (%s) on the %s diff, %d chars",
+        reviewer_name,
+        context.diff_mode,
+        len(context.diff),
+    )
     result = reviewer_agent.review(context)
     flow.info(
         "[review] %d finding(s), rating=%s",
@@ -248,6 +259,12 @@ def run_review(pr_number: int) -> ReviewResult | None:
     #      state:   everything to remember for the next run
     state = _record_reviewed_code(state, context)
     save_memory(pr_number, render_comment(context, result), state)
+    flow.info(
+        "[exit] review posted at %s — %d new finding(s), %d in state",
+        context.head_sha[:10],
+        len(filed),
+        len(state.findings),
+    )
     return result
 
 
@@ -295,10 +312,23 @@ def _recheck_previous(
         ", ".join(f.id for f in skipped.to_recheck) or "none",
     )
 
-    if skipped.to_recheck:
-        texts = head_files.get([f.file for f in skipped.to_recheck])
-        recheck_agent = build_rechecker()
-        recheck_findings(skipped.to_recheck, texts, context, recheck_agent)
+    if not skipped.to_recheck:
+        flow.info("[agent] recheck_agent not built — no previous finding in a changed file")
+        return state, context
+
+    texts = head_files.get([f.file for f in skipped.to_recheck])
+    recheck_agent = build_rechecker()
+    flow.info(
+        "[agent] calling recheck_agent for %d finding(s): %s",
+        len(skipped.to_recheck),
+        ", ".join(f.id for f in skipped.to_recheck),
+    )
+    outcomes = recheck_findings(skipped.to_recheck, texts, context, recheck_agent)
+    flow.info(
+        "[agent] recheck_agent done — %d answered, %d kept their status",
+        len(outcomes),
+        len(skipped.to_recheck) - len(outcomes),
+    )
     return state, context
 
 
@@ -345,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
             response = chat_model.invoke("Testing what model is being used")
             logger.info("LLM replied: %.200s", response.content)
             logger.debug("Full LLM response: %r", response)
-            flow.info("[done] manual dispatch OK")
+            flow.info("[done] exit 0 — manual dispatch OK, no review")
             return 0
         result = run_review(args.pr)
     except (
@@ -363,13 +393,16 @@ def main(argv: list[str] | None = None) -> int:
         # Traceback only at DEBUG: the message names the cause; the stack
         # is for digging into it.
         flow.error(
-            "[failed] %s: %s",
+            "[failed] exit 1, nothing posted — %s: %s",
             type(exc).__name__,
             exc,
             exc_info=logger.isEnabledFor(logging.DEBUG),
         )
         return 1
-    flow.info("[done] %s", "skipped" if result is None else "posted")
+    flow.info(
+        "[done] exit 0 — %s",
+        "skipped, nothing new" if result is None else "review posted",
+    )
     return 0
 
 

@@ -252,15 +252,28 @@ def _recheck_one(
     """
     if text is None:
         if in_pr:
-            logger.warning(
-                "%s: %s unreadable at head, status kept", finding.id, finding.file
+            flow.warning(
+                "[recheck] %s: %s unreadable at head — no LLM call, status kept",
+                finding.id,
+                finding.file,
             )
             return None
+        flow.info("[recheck] %s: %s gone from head — no LLM call", finding.id, finding.file)
         return RecheckOutcome(False, "file no longer exists", finding.line)
 
     located = locate_line(text, finding.snippet, finding.line)
+    flow.info(
+        "[recheck] %s: asking recheck_agent about %s:%d (%s)",
+        finding.id,
+        finding.file,
+        located or finding.line,
+        f"moved from line {finding.line}" if located and located != finding.line
+        else "code found at the stored line" if located
+        else "stored code not found",
+    )
     verdict = recheck_agent.recheck(render_recheck(finding, text, located, context))
     if verdict is None:
+        flow.warning("[recheck] %s: no usable answer — status kept", finding.id)
         return None
     return RecheckOutcome(
         issue_present=verdict.issue_present,
