@@ -147,7 +147,7 @@ def test_main_does_not_refile_a_known_issue(monkeypatch, stub_review) -> None:
     assert state.next_id == 2  # no ID used up by the duplicate
     assert "### F002" not in stub_review["body"]
     # Still visible as a previous finding — never "No issues found".
-    assert "- **F001** — Missing input validation · `src/cli.py:12` · open" in stub_review["body"]
+    assert "- 🟡 **F001** — Missing input validation · `src/cli.py:12` · open" in stub_review["body"]
     assert "No new issues found." in stub_review["body"]
     assert "No issues found. 🎉" not in stub_review["body"]
 
@@ -312,7 +312,12 @@ def test_main_rejects_a_finding_a_collaborator_explained(monkeypatch, stub_revie
     assert (stored.id, stored.status, stored.rejected_by) == (
         "F001", FindingStatus.REJECTED, "developer"
     )
-    assert "rejected (developer)" in stub_review["body"]
+    assert (stored.explained_by, stored.rejection_reason) == (["alice"], "caller checks argv")
+    assert (
+        "· dismissed (developer explained)\n"
+        "  - explained by `alice`: caller checks argv"
+    ) in stub_review["body"]
+    assert "@alice" not in stub_review["body"]  # would notify them every review
 
 
 def test_main_ignores_an_explanation_from_an_outsider(monkeypatch, stub_review) -> None:
@@ -515,8 +520,9 @@ def test_render_comment_shows_previous_then_new_findings() -> None:
 
     assert (
         "**Previous findings (2):**\n\n"
-        "- **F001** — Missing input validation · `src/cli.py:12` · open\n"
-        "- **F002** — Missing input validation · `src/cli.py:30` · rejected (developer)\n\n"
+        "- 🟡 **F001** — Missing input validation · `src/cli.py:12` · open\n"
+        "- 💬 **F002** — Missing input validation · `src/cli.py:30` · "
+        "dismissed (developer explained)\n\n"
         "**New findings (1):**\n\n"
         "### F003 — Off-by-one in loop"
     ) in body
@@ -555,7 +561,7 @@ def test_render_comment_collapses_long_previous_lists() -> None:
     )
 
     assert "<summary>Show all 12</summary>" in body
-    assert "- **F012** —" in body
+    assert "- 🟡 **F012** —" in body
 
 
 def test_render_comment_keeps_previous_titles_on_one_line() -> None:
@@ -566,8 +572,55 @@ def test_render_comment_keeps_previous_titles_on_one_line() -> None:
         make_context(previous_findings=[finding]), ReviewResult(overall_rating="comment")
     )
 
-    assert "- **F001** — Bad check ## Approved ·" in body
+    assert "- 🟡 **F001** — Bad check ## Approved ·" in body
     assert "\n## Approved" not in body
+
+
+def test_render_comment_labels_every_status_in_plain_words() -> None:
+    previous = [
+        make_stored_finding(id="F001"),
+        make_stored_finding(id="F002", status=FindingStatus.RESOLVED),
+        make_stored_finding(id="F003", status=FindingStatus.REOPENED),
+        make_stored_finding(id="F004", status=FindingStatus.REJECTED, rejected_by="critic"),
+    ]
+
+    body = render_comment(
+        make_context(previous_findings=previous), ReviewResult(overall_rating="comment")
+    )
+
+    assert "- 🟡 **F001**" in body and body.count("· open") == 1
+    assert "- ✅ **F002**" in body and "· fixed" in body
+    assert "- 🔁 **F003**" in body and "· reopened (came back after a fix)" in body
+    assert "- 🚫 **F004**" in body and "· dismissed (critic)" in body
+
+
+def test_render_comment_says_who_dismissed_a_finding_and_why() -> None:
+    finding = make_stored_finding(
+        status=FindingStatus.REJECTED,
+        rejected_by="developer",
+        explained_by=["alice", "bo`b"],
+        rejection_reason="Caller\n\n## checks it",
+    )
+
+    body = render_comment(
+        make_context(previous_findings=[finding]), ReviewResult(overall_rating="comment")
+    )
+
+    # Logins in code spans (no @ notification, no backtick break-out);
+    # the reason collapsed so it cannot start a heading.
+    assert "  - explained by `alice`, `bob`: Caller ## checks it" in body
+
+
+def test_render_comment_handles_a_dismissal_saved_without_who_or_why() -> None:
+    # State saved before these fields existed: label only, no second line.
+    finding = make_stored_finding(status=FindingStatus.REJECTED, rejected_by="developer")
+
+    body = render_comment(
+        make_context(previous_findings=[finding]), ReviewResult(overall_rating="comment")
+    )
+
+    assert "· dismissed (developer explained)" in body
+    assert "explained by" not in body
 
 
 def test_render_comment_collapses_long_file_lists() -> None:

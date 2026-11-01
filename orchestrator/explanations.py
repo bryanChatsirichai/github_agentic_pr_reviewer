@@ -32,7 +32,7 @@ from agents.reviewer_agents.factory import PROMPTS_DIR
 from agents.structured import ask_structured
 from models.explanation_verdict import ExplanationVerdict
 from models.finding import FindingStatus
-from models.stored_finding import StoredFinding
+from models.stored_finding import MAX_REJECTION_REASON_CHARS, StoredFinding
 from orchestrator.memory import parse_state_block, transition
 from orchestrator.recheck import code_window
 
@@ -170,7 +170,9 @@ def apply_explanations(
     """Return ``findings`` with accepted explanations applied, in input order.
 
     One judge call per explained finding. Accepted → ``rejected`` with
-    ``rejected_by="developer"``; declined or no usable answer → unchanged.
+    ``rejected_by="developer"``, plus who explained it (``explained_by``)
+    and the judge's reason (``rejection_reason``) for the comment to show.
+    Declined or no usable answer → unchanged.
     ``file_texts`` holds head content for the judge to check against; a
     missing file is judged without code.
     """
@@ -195,20 +197,34 @@ def _judge_one(
         flow.warning("[explain] %s: no usable answer — status kept", finding.id)
         return finding
 
-    authors = ", ".join(f"@{r['author']}" for r in replies)
-    # LLM-written: collapsed so it cannot break the log line.
+    # dict.fromkeys: one entry per person, in reply order.
+    logins = list(dict.fromkeys(r["author"] for r in replies if r["author"]))
+    # LLM-written: collapsed so it cannot break the log line or the comment.
     reason = " ".join(verdict.reason.split())
     flow.info(
         "[explain] %s %s (%s) — %s",
         finding.id,
         "accepted" if verdict.accepted else "declined",
-        authors,
+        ", ".join(f"@{login}" for login in logins),
         reason,
     )
     if not verdict.accepted:
         return finding
+
     flow.info("[status] %s %s → rejected (developer)", finding.id, finding.status)
-    return transition(finding, FindingStatus.REJECTED, rejected_by="developer")
+    rejected = transition(finding, FindingStatus.REJECTED, rejected_by="developer")
+    # Re-validated rather than model_copy'd, so the length cap is enforced.
+    return StoredFinding.model_validate(
+        rejected.model_dump()
+        | {"explained_by": logins, "rejection_reason": _cap_reason(reason)}
+    )
+
+
+def _cap_reason(text: str) -> str:
+    """Cut ``text`` to ``MAX_REJECTION_REASON_CHARS``, ending in ``…`` when cut."""
+    if len(text) <= MAX_REJECTION_REASON_CHARS:
+        return text
+    return text[: MAX_REJECTION_REASON_CHARS - 1].rstrip() + "…"
 
 
 def render_explanation(

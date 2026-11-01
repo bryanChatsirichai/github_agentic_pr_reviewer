@@ -39,6 +39,7 @@ from clients.github import (
     get_pr_comments,
     verify_connection,
 )
+from models.finding import FindingStatus
 from models.pr_context import PRContext
 from models.review_result import ReviewResult
 from models.review_state import ReviewState
@@ -170,16 +171,56 @@ def render_comment(context: PRContext, result: ReviewResult) -> str:
 
 
 def _previous_section(findings: list[StoredFinding], inline_limit: int = 10) -> str:
-    """One line per previous finding, collapsed once the list gets long."""
-    listed = "\n".join(
-        # Whitespace collapsed: the title comes from an editable comment.
-        f"- **{f.id}** — {' '.join(f.title.split())} · `{f.file}:{f.line}` · "
-        + (f"{f.status} ({f.rejected_by})" if f.rejected_by else f"{f.status}")
-        for f in findings
-    )
+    """One line per previous finding, collapsed once the list gets long.
+
+    A finding a developer explained away gets a second line saying who and
+    why, so a reader does not need the CI log to trust the dismissal.
+    """
+    listed = "\n".join(_previous_line(f) for f in findings)
     if len(findings) <= inline_limit:
         return listed
     return f"<details>\n<summary>Show all {len(findings)}</summary>\n\n{listed}\n\n</details>"
+
+
+def _previous_line(finding: StoredFinding) -> str:
+    """Render one previous finding. Every field came from an editable comment,
+    so free text is collapsed to one line before it is shown."""
+    marker, label = _status_label(finding)
+    line = (
+        f"- {marker} **{finding.id}** — {_one_line(finding.title)} · "
+        f"`{finding.file}:{finding.line}` · {label}"
+    )
+    if finding.rejected_by == "developer" and finding.explained_by:
+        # Backticks, not @: a mention would notify them on every review.
+        # Backticks are stripped from the login so it cannot end the span.
+        who = ", ".join(f"`{login.replace('`', '')}`" for login in finding.explained_by)
+        why = _one_line(finding.rejection_reason) or "no reason recorded"
+        line += f"\n  - explained by {who}: {why}"
+    return line
+
+
+def _status_label(finding: StoredFinding) -> tuple[str, str]:
+    """``(marker, label)`` for a previous finding, worded for a reader who
+    does not know the lifecycle names (``rejected`` reads as if the code
+    was turned down)."""
+    if finding.status is FindingStatus.REJECTED:
+        if finding.rejected_by == "developer":
+            return "💬", "dismissed (developer explained)"
+        return "🚫", f"dismissed ({finding.rejected_by})"
+    return _STATUS_LABELS.get(finding.status, ("•", str(finding.status)))
+
+
+#: How each non-dismissed status reads in the comment.
+_STATUS_LABELS: dict[FindingStatus, tuple[str, str]] = {
+    FindingStatus.OPEN: ("🟡", "open"),
+    FindingStatus.REOPENED: ("🔁", "reopened (came back after a fix)"),
+    FindingStatus.RESOLVED: ("✅", "fixed"),
+}
+
+
+def _one_line(text: str) -> str:
+    """Collapse all whitespace, newlines included, to single spaces."""
+    return " ".join(text.split())
 
 
 def _files_section(files: list[str], inline_limit: int = 10) -> str:

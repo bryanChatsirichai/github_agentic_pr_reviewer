@@ -16,7 +16,8 @@ from orchestrator.explanations import (
     developer_replies,
     render_explanation,
 )
-from orchestrator.memory import render_state_block
+from models.stored_finding import MAX_REJECTION_REASON_CHARS
+from orchestrator.memory import parse_state_block, render_state_block
 from tests.helpers import make_review_state, make_stored_finding
 
 BOT = "github-actions[bot]"
@@ -166,6 +167,33 @@ def test_an_accepted_explanation_rejects_the_finding_as_developer() -> None:
 
     assert updated[0].status is FindingStatus.REJECTED
     assert updated[0].rejected_by == "developer"
+    # Who and why, for the comment; the reason collapsed to one line.
+    assert updated[0].explained_by == ["alice"]
+    assert updated[0].rejection_reason == "caller checks it"
+
+
+def test_each_explainer_is_recorded_once_in_reply_order() -> None:
+    explanations = {
+        "F001": [
+            _comment(1, "bob", "F001: a", "MEMBER"),
+            _comment(2, "alice", "F001: b", "OWNER"),
+            _comment(3, "bob", "F001: c", "MEMBER"),
+        ]
+    }
+
+    updated = apply_explanations([make_stored_finding()], explanations, {}, ScriptedJudge(ACCEPT))
+
+    assert updated[0].explained_by == ["bob", "alice"]
+
+
+def test_a_long_reason_is_capped_for_the_state_block() -> None:
+    verdict = ExplanationVerdict(accepted=True, reason="word " * 200)
+    explanations = {"F001": [_comment(1, "alice", "F001: why", "OWNER")]}
+
+    updated = apply_explanations([make_stored_finding()], explanations, {}, ScriptedJudge(verdict))
+
+    assert len(updated[0].rejection_reason) == MAX_REJECTION_REASON_CHARS
+    assert updated[0].rejection_reason.endswith("…")
 
 
 def test_a_declined_or_unanswered_explanation_changes_nothing() -> None:
@@ -256,3 +284,29 @@ def test_build_explanation_judge_loads_the_prompt(monkeypatch) -> None:
 
     assert judge.system_prompt.startswith("# Explanation Judge")
     assert judge.llm is fake
+
+
+def test_who_and_why_survive_the_state_block_round_trip() -> None:
+    # Saved in one run's comment, read back by the next.
+    finding = make_stored_finding(
+        status=FindingStatus.REJECTED,
+        rejected_by="developer",
+        explained_by=["alice"],
+        rejection_reason="caller checks it",
+    )
+
+    state = parse_state_block(render_state_block(make_review_state(findings=[finding])))
+
+    assert state.findings[0].explained_by == ["alice"]
+    assert state.findings[0].rejection_reason == "caller checks it"
+
+
+def test_a_state_block_saved_before_these_fields_still_loads() -> None:
+    old = render_state_block(make_review_state()).replace(
+        ',"explained_by":[],"rejection_reason":""', ""
+    )
+    assert "explained_by" not in old
+
+    state = parse_state_block(old)
+
+    assert state is not None and state.findings[0].explained_by == []
