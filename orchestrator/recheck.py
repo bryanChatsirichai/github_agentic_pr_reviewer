@@ -29,6 +29,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from agents.llm import get_llm
+from clients import github
 from agents.reviewer_agents.factory import PROMPTS_DIR
 from models.finding import FindingStatus
 from models.pr_context import PRContext
@@ -247,14 +248,16 @@ def _recheck_one(
 ) -> RecheckOutcome | None:
     """Re-check one finding; None when there is no answer to act on.
 
-    - No head text and the file is not in the PR: it was added, then
+    - No head text and the file is missing at head: it was added, then
       deleted, so the defect is gone with it. No LLM call.
-    - No head text but the file is still in the PR: it is unreadable (too
-      large or binary). None.
+    - No head text but the file exists (a directory, or over the 1 MB
+      contents limit): unreadable. None. Being in the PR proves it exists;
+      outside the PR (all its changes reverted) only GitHub can tell
+      missing from too large, so it is asked.
     - Otherwise one LLM call; None when it gives no usable answer.
     """
     if text is None:
-        if in_pr:
+        if in_pr or github.file_exists(finding.file, context.head_sha):
             flow.warning(
                 "[recheck] %s: %s unreadable at head — no LLM call, status kept",
                 finding.id,

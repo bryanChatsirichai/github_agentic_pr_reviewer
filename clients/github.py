@@ -37,6 +37,7 @@ __all__ = [
     "render_diff",
     "compare_commits",
     "get_file_content",
+    "file_exists",
     "get_merge_base_sha",
     "get_existing_review_comments",
     "post_review_comment",
@@ -212,6 +213,28 @@ def get_file_content(
         logger.debug("%s at %s is a directory or too large to fetch", path, ref)
         return None
     return content.decoded_content.decode("utf-8", errors="replace")
+
+
+def file_exists(
+    path: str,
+    ref: str,
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> bool:
+    """Return whether ``path`` exists at commit ``ref`` (file or directory).
+
+    Tells apart the cases ``get_file_content`` folds into None: False only
+    on a 404; a directory or a file over 1 MB exists. Other API errors
+    propagate.
+    """
+    try:
+        (repo or _get_repo(client)).get_contents(path, ref=ref)
+    except GithubException as exc:
+        if exc.status == 404:
+            return False
+        raise
+    return True
 
 
 def get_existing_review_comments(
