@@ -4,7 +4,7 @@ Pipeline (``run_review``): load memory → build PR context → re-check
 previous findings → run the logic reviewer → drop duplicates → file new
 findings → render them into a ``🤖 AI Review`` comment → post it with the
 hidden state block (``save_memory``). Run as a module from the repo root:
-``python -m orchestrator.main``.
+``python -m orchestrator.main``
 """
 
 import argparse
