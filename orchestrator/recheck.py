@@ -237,7 +237,7 @@ def _recheck_one(
     - Otherwise one LLM call; None when it gives no usable answer.
     """
     if text is None:
-        if in_pr or github.file_exists(finding.file, context.head_sha):
+        if in_pr:
             flow.warning(
                 "[recheck] %s: %s unreadable at head — no LLM call, status kept",
                 finding.id,
