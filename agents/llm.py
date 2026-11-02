@@ -3,6 +3,7 @@
 import os
 
 from langchain.chat_models import init_chat_model
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
 
 #: Per-provider env wiring. MODEL_PROVIDER picks the entry; prefix is the
@@ -29,7 +30,32 @@ PROVIDERS: dict[str, dict[str, str]] = {
     },
 }
 
-__all__ = ["PROVIDERS", "get_llm", "resolve_model"]
+__all__ = ["PROVIDERS", "get_llm", "llm_call_count", "resolve_model"]
+
+
+class _CallCounter(BaseCallbackHandler):
+    """Counts chat model requests, retries and failed requests included.
+
+    ``on_chat_model_start`` fires before the request is sent, once per
+    ``invoke`` — also through ``with_structured_output``, which calls the
+    same model underneath.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def on_chat_model_start(self, serialized, messages, **kwargs) -> None:
+        self.calls += 1
+
+
+#: Shared by every model ``get_llm`` builds, so one process (one review
+#: run) gets one total across all agents.
+_counter = _CallCounter()
+
+
+def llm_call_count() -> int:
+    """Number of LLM requests made so far by models from ``get_llm``."""
+    return _counter.calls
 
 
 def resolve_model() -> tuple[str, str]:
@@ -73,4 +99,6 @@ def get_llm() -> BaseChatModel:
             f"{spec['key_env']} is not set — add it to .env or the CI "
             f"secret (selected via MODEL_PROVIDER={provider})"
         )
-    return init_chat_model(f"{spec['prefix']}:{model}", api_key=api_key)
+    return init_chat_model(
+        f"{spec['prefix']}:{model}", api_key=api_key, callbacks=[_counter]
+    )
