@@ -18,6 +18,10 @@ from models.finding import FindingStatus, Severity
 #: the visible review shares that budget with the state block.
 MAX_DESCRIPTION_CHARS = 300
 
+#: Cap on a stored rejection reason: one sentence, kept short for the same
+#: comment-size budget.
+MAX_REJECTION_REASON_CHARS = 300
+
 #: Finding IDs: ``F`` + at least three digits (``F001`` … ``F999``, ``F1000``).
 _ID_PATTERN = r"^F\d{3,}$"
 
@@ -110,6 +114,16 @@ class StoredFinding(BaseModel):
 
     #: GitHub inline review comment id. ``None`` until Step 9b posts threads.
     thread_id: int | None = None
+
+    #: Logins whose explanation got the finding dismissed (Step 9 Task 4).
+    #: Set with ``rejected_by="developer"``. Shown without ``@`` so the
+    #: review comment does not notify them again on every run.
+    explained_by: list[str] = Field(default_factory=list)
+
+    #: Why the finding was dismissed, in one line: the explanation judge's
+    #: reason. Shown in the comment so other readers see why without the
+    #: CI log.
+    rejection_reason: str = Field(default="", max_length=MAX_REJECTION_REASON_CHARS)
 
     @model_validator(mode="after")
     def _check_status(self) -> "StoredFinding":

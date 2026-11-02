@@ -37,8 +37,10 @@ __all__ = [
     "render_diff",
     "compare_commits",
     "get_file_content",
+    "file_exists",
     "get_merge_base_sha",
     "get_existing_review_comments",
+    "get_pr_comments",
     "post_review_comment",
 ]
 
@@ -214,6 +216,28 @@ def get_file_content(
     return content.decoded_content.decode("utf-8", errors="replace")
 
 
+def file_exists(
+    path: str,
+    ref: str,
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> bool:
+    """Return whether ``path`` exists at commit ``ref`` (file or directory).
+
+    Tells apart the cases ``get_file_content`` folds into None: False only
+    on a 404; a directory or a file over 1 MB exists. Other API errors
+    propagate.
+    """
+    try:
+        (repo or _get_repo(client)).get_contents(path, ref=ref)
+    except GithubException as exc:
+        if exc.status == 404:
+            return False
+        raise
+    return True
+
+
 def get_existing_review_comments(
     pr_number: int,
     *,
@@ -242,6 +266,33 @@ def get_existing_review_comments(
             )
     logger.debug("Found %d prior bot comment(s) on PR #%s", len(comments), pr_number)
     return comments
+
+
+def get_pr_comments(
+    pr_number: int,
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> list[dict[str, Any]]:
+    """Return every PR-conversation comment, oldest first, from anyone.
+
+    Each entry is ``{"id", "body", "created_at" (ISO-8601 str), "author"
+    (login or None), "author_association"}``. The association is GitHub's
+    ``OWNER`` / ``MEMBER`` / ``COLLABORATOR`` / ``CONTRIBUTOR`` / ``NONE`` /
+    …, which callers use to decide whose words carry weight. Inline review
+    comments on the diff are a different API and not included.
+    """
+    pr = (repo or _get_repo(client)).get_pull(pr_number)
+    return [
+        {
+            "id": comment.id,
+            "body": comment.body or "",
+            "created_at": comment.created_at.isoformat(),
+            "author": comment.user.login if comment.user else None,
+            "author_association": comment.author_association,
+        }
+        for comment in pr.get_issue_comments()
+    ]
 
 
 def post_review_comment(

@@ -4,6 +4,7 @@ Every public function takes an injectable ``repo`` / ``client``, so tests
 pass fakes built from the PR fixture and never touch the network.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -15,8 +16,10 @@ from clients.github import (
     MARKER,
     compare_commits,
     get_existing_review_comments,
+    file_exists,
     get_file_content,
     get_merge_base_sha,
+    get_pr_comments,
     get_pr_diff,
     get_pr_files,
     get_pull_request,
@@ -215,6 +218,55 @@ def test_get_file_content_replaces_invalid_utf8() -> None:
     )
 
     assert get_file_content("bin.dat", "headdef456", repo=repo) == "ok �"
+
+
+def test_get_pr_comments_returns_every_comment_with_its_association() -> None:
+    at = datetime(2026, 11, 1, 10, 0, tzinfo=timezone.utc)
+    comments = [
+        SimpleNamespace(
+            id=1, body="F001: why", created_at=at,
+            user=SimpleNamespace(login="alice"), author_association="OWNER",
+        ),
+        SimpleNamespace(  # deleted account, empty body
+            id=2, body=None, created_at=at, user=None, author_association="NONE",
+        ),
+    ]
+    repo = make_repo(SimpleNamespace(get_issue_comments=lambda: comments))
+
+    assert get_pr_comments(42, repo=repo) == [
+        {"id": 1, "body": "F001: why", "created_at": at.isoformat(),
+         "author": "alice", "author_association": "OWNER"},
+        {"id": 2, "body": "", "created_at": at.isoformat(),
+         "author": None, "author_association": "NONE"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [[_content_file("a")], _content_file("", encoding="none")],
+    ids=["directory", "over-1mb"],
+)
+def test_file_exists_for_paths_without_readable_text(result) -> None:
+    # The cases get_file_content returns None for, yet the path is there.
+    repo = MagicMock()
+    repo.get_contents.return_value = result
+
+    assert file_exists("big.bin", "headdef456", repo=repo) is True
+
+
+def test_file_exists_false_only_on_404() -> None:
+    repo = MagicMock()
+    repo.get_contents.side_effect = GithubException(404, {"message": "Not Found"})
+
+    assert file_exists("gone.py", "headdef456", repo=repo) is False
+
+
+def test_file_exists_raises_other_api_errors() -> None:
+    repo = MagicMock()
+    repo.get_contents.side_effect = GithubException(403, {"message": "Forbidden"})
+
+    with pytest.raises(GithubException):
+        file_exists("src/cli.py", "headdef456", repo=repo)
 
 
 # --- writes ----------------------------------------------------------------
