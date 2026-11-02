@@ -7,8 +7,9 @@ resolution — no network, no real provider clients.
 from unittest import mock
 
 import pytest
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
-from agents.llm import get_llm
+from agents.llm import get_llm, llm_call_count
 
 
 @pytest.fixture
@@ -48,7 +49,7 @@ def test_resolves_model_and_key(init_spy, monkeypatch, provider, env, expected_m
 
     get_llm()
 
-    init_spy.assert_called_once_with(expected_model, api_key="k")
+    init_spy.assert_called_once_with(expected_model, api_key="k", callbacks=mock.ANY)
 
 
 @pytest.mark.parametrize(
@@ -64,3 +65,18 @@ def test_config_errors_raise(init_spy, monkeypatch, provider, error):
         monkeypatch.setenv("MODEL_PROVIDER", provider)
     with pytest.raises(RuntimeError, match=error):
         get_llm()
+
+
+def test_counts_each_call_of_built_models(init_spy, monkeypatch):
+    """Every model from get_llm shares the counter llm_call_count reads."""
+    monkeypatch.setenv("MODEL_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    get_llm()
+    callbacks = init_spy.call_args.kwargs["callbacks"]
+    model = FakeListChatModel(responses=["a", "b"], callbacks=callbacks)
+    before = llm_call_count()
+
+    model.invoke("first")
+    model.invoke("second")
+
+    assert llm_call_count() - before == 2

@@ -409,6 +409,9 @@ def _recheck_previous(
         len(skipped.to_recheck),
         ", ".join(f.id for f in skipped.to_recheck),
     )
+    # One LLM call per finding, not per file: a changed file holding three
+    # findings costs three calls (each retried once on unparseable output).
+    # The file text is fetched once and shared.
     outcomes = recheck_findings(skipped.to_recheck, texts, context, recheck_agent)
     flow.info(
         "[agent] recheck_agent done — %d answered, %d unanswered (status kept)",
@@ -517,7 +520,10 @@ def main(argv: list[str] | None = None) -> int:
             response = chat_model.invoke("Testing what model is being used")
             logger.info("LLM replied: %.200s", response.content)
             logger.debug("Full LLM response: %r", response)
-            flow.info("[done] exit 0 — manual dispatch OK, no review")
+            flow.info(
+                "[done] exit 0 — manual dispatch OK, no review, %d LLM call(s)",
+                llm.llm_call_count(),
+            )
             return 0
         result = run_review(args.pr)
     except (
@@ -535,15 +541,17 @@ def main(argv: list[str] | None = None) -> int:
         # Traceback only at DEBUG: the message names the cause; the stack
         # is for digging into it.
         flow.error(
-            "[failed] exit 1, nothing posted — %s: %s",
+            "[failed] exit 1, nothing posted, %d LLM call(s) — %s: %s",
+            llm.llm_call_count(),
             type(exc).__name__,
             exc,
             exc_info=logger.isEnabledFor(logging.DEBUG),
         )
         return 1
     flow.info(
-        "[done] exit 0 — %s",
+        "[done] exit 0 — %s, %d LLM call(s)",
         "skipped, nothing new" if result is None else "review posted",
+        llm.llm_call_count(),
     )
     return 0
 
