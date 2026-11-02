@@ -373,7 +373,7 @@ Every run with new code posts a fresh summary comment, so the latest bot comment
 
 - [x] Fix → resolved: bot finding F001 went `open → resolved` (shown `✅ fixed`) on the push that fixed it.
 - [x] Collaborator explanation → dismissed: F002–F004 were explained in PR comments and all three went to `rejected (developer)`.
-- [x] Regression → reopened (2026-11-02): `d7480d9` put F001's bug back (dropped the `file_exists` check). The next review moved F001 `resolved → reopened` (shown `🔁 reopened (came back after a fix)`), and the state block agrees. Seen along the way: "Overall" still said `approve` with F001 reopened (Task 5's open item), and the located line moved to `recheck.py:205`, some 35 lines above the reintroduced check.
+- [x] Regression → reopened (2026-11-02): `d7480d9` put F001's bug back (dropped the `file_exists` check). The next review moved F001 `resolved → reopened` (shown `🔁 reopened (came back after a fix)`), and the state block agrees. The revert `e414cc2` moved it `reopened → resolved` again. Seen along the way: "Overall" still said `approve` with F001 reopened (Task 5's open item), and the located line moved to `recheck.py:205`, some 35 lines above the reintroduced check.
 - [x] Non-collaborator reply ignored: accepted on the offline test `test_main_ignores_an_explanation_from_an_outsider`; not tried live (no non-collaborator account to hand).
 
 ---
