@@ -1,7 +1,7 @@
 # Agentic PR Review System — Architecture
 
-> **Status:** Living document. Describes the code through roadmap Step 9 (tasks 1–4 built, task 5 partly).
-> **Last updated:** 2026-11-01
+> **Status:** Living document. Describes the code through roadmap Step 9b (Step 9 task 5 partly; Step 9b built, live checks partly done).
+> **Last updated:** 2026-11-12
 > **Related:** [`implementation-roadmap.md`](implementation-roadmap.md) (build steps, task lists, verification records) · [`framework-decision.md`](framework-decision.md) · [`llm-providers.md`](llm-providers.md) · [`multi-repo-integration.md`](multi-repo-integration.md)
 > **Legend:** ✅ built · 🚧 built, live verification pending · 📋 planned.
 >
@@ -15,7 +15,7 @@
 > | Dashed grey box | Planned, not built |
 > | Diamond | A decision |
 > | `file · function` in a box | Where that box lives in the code |
-> | Step ID (`1`–`7`, `4a`, `4b`) | The step in the review-flow table (section 7), which also gives its log tag |
+> | Step ID (`1`–`8`, `3b`, `4a`, `4b`) | The step in the review-flow table (section 7), which also gives its log tag |
 
 ## Contents
 
@@ -84,8 +84,8 @@ flowchart LR
 | B Stateless review | 2–5 | GitHub client, PR context, first LLM review, re-review per commit | ✅ |
 | C Memory | 6–7 | State in bot comments; previous findings fed to the reviewer; dedupe | ✅ |
 | D Incremental + re-check | 8 | Incremental diff (full / incremental / noop) | ✅ |
-| | 9 | Re-check pass, developer explanations, status labels | 🚧 tasks 1–4 built; task 5 partly ("Overall" rating pending); regression path not yet tried live |
-| | 9b | Inline review threads | 📋 |
+| | 9 | Re-check pass, developer explanations, status labels | 🚧 tasks 1–4 built and verified live; task 5 partly ("Overall" rating and Markdown escaping of the reason pending) |
+| | 9b | Inline review threads, thread replies as explanations | 🚧 built; posting, replying and reading verified live; threads are resolved by hand (section 11.2) |
 | E Agentic structure | 10–14 | LangGraph graph, tools, critic, judge, specialised reviewers | 📋 |
 
 Task lists and verification records per step: [`implementation-roadmap.md`](implementation-roadmap.md).
@@ -151,7 +151,7 @@ In a called workflow, `github.token`, `github.repository` and `github.event` bel
 | Concern | Technology |
 |---|---|
 | Language, packaging | Python 3.12, uv (`pyproject.toml`, `uv.lock`) |
-| GitHub | PyGithub (REST); GraphQL for thread resolution in Step 9b 📋 |
+| GitHub | PyGithub (REST); GraphQL through PyGithub's requester for review threads (read; resolve is attempted but refused for `GITHUB_TOKEN`, section 11.2) |
 | LLM access | LangChain `init_chat_model` + `with_structured_output`; `langchain-google-genai`, `-openai`, `-anthropic` |
 | Contracts | Pydantic v2 |
 | State | JSON block in bot PR comments |
@@ -176,6 +176,7 @@ flowchart TB
             CB["context_builder.py · build_context<br/>diff.py · choose_diff"]
             RCK["recheck.py<br/>skip_unchanged · recheck_findings<br/>apply_outcomes"]
             EXP["explanations.py<br/>developer_replies · apply_explanations"]
+            THR["threads.py<br/>commentable_lines · threads_by_finding<br/>plan_thread_actions · thread_replies"]
         end
     end
 
@@ -195,6 +196,7 @@ flowchart TB
     MAIN -->|"3 context"| CB
     MAIN -->|"4a re-check"| RCK
     MAIN -->|"4b explanations"| EXP
+    MAIN -->|"3b read · 8 sync threads"| THR
     MAIN -->|"5 review"| REV
     RCK -->|"one call per<br/>changed finding"| STR
     EXP -->|"one call per<br/>explained finding"| STR
@@ -220,7 +222,8 @@ Every module uses the Pydantic contracts in `models/` (section 6.1); that depend
 | `orchestrator/recheck.py` | Re-check of previous findings: `skip_unchanged` (no LLM), `recheck_findings` (re-check agent), `apply_outcomes` (section 8.2) |
 | `orchestrator/explanations.py` | Developer explanations: `developer_replies`, `collect_explanations`, `apply_explanations` (explanation judge) (section 8.3) |
 | `orchestrator/memory.py` | State block render/parse, `load_memory` / `save_memory`, `resolve_bot_login`, lifecycle table, IDs, `cut_snippet`, `drop_duplicates`, `file_new_findings` |
-| `clients/github.py` | Every GitHub read and write: PR metadata, files (with blob SHA), diff rendering, `compare_commits`, `get_merge_base_sha`, `get_file_content`, `file_exists`, bot comments, all comments (with `author_association`), `post_review_comment`. `repo`/`client` are injectable for offline tests |
+| `orchestrator/threads.py` | Inline threads, pure (no I/O): `commentable_lines`, `finding_marker` / `threads_by_finding`, `plan_thread_actions`, `thread_replies` (section 11.2) |
+| `clients/github.py` | Every GitHub read and write: PR metadata, files (with blob SHA), diff rendering, `compare_commits`, `get_merge_base_sha`, `get_file_content`, `file_exists`, bot comments, all comments (with `author_association`), `post_review_comment`, and for threads `get_review_threads` (GraphQL, all pages), `post_inline_comments`, `reply_to_review_comment`, `set_thread_resolved`. `repo`/`client` are injectable for offline tests |
 | `agents/llm.py` | Provider-agnostic chat model from `MODEL_PROVIDER` |
 | `agents/structured.py` | `ask_structured`: one question, one small JSON object, retried once; None on failure |
 | `agents/reviewer_agents/` | `build_reviewer` binds a prompt file to the model; `Reviewer.review` adds text repair (`parser.py`) and one retry |
@@ -268,6 +271,7 @@ A failed review fails the run; a failed re-check or judgment only leaves one fin
 | Who | Fetches | When |
 |---|---|---|
 | Orchestrator | PR metadata, files, compares, bot comments, merge-base | Every run |
+| Orchestrator | Review threads (GraphQL) | Every run with new code |
 | Orchestrator | Head file contents, human PR comments | Only when a step needs them; each head file once per run |
 | Agents | Repo files, git history, code search | Only when investigating 📋 Step 11 |
 
@@ -350,7 +354,7 @@ There are two kinds of finding on purpose:
 | Written by | the reviewer LLM | the orchestrator only |
 | `id` | the LLM's own numbering, discarded | stable, from `next_id`, never reused |
 | `status` | always `new` | never `new` (section 6.3) |
-| Extra fields | — | `rejected_by`, `snippet`, `thread_id` (9b), `explained_by`, `rejection_reason` |
+| Extra fields | — | `rejected_by`, `snippet`, `thread_id` (always `null`: threads are found by marker, section 11.2; kept because every saved block contains it), `explained_by`, `rejection_reason` |
 | Limits | — | `line ≥ 1`; `description`, `rejection_reason` ≤ 300 chars; `extra="forbid"` |
 
 Enums: `Severity` = `low | medium | high | critical` (independent of `confidence`). `Rating` = `approve | comment | request_changes`. `DiffMode` = `full | incremental | noop`. `ReviewState()` with no arguments is the empty state: full review, IDs start at `F001`. Validation enforces unique IDs and `next_id` greater than every stored ID.
@@ -490,6 +494,12 @@ sequenceDiagram
     alt diff_mode = noop
         Note over M: [exit] nothing new — no agent called, nothing posted
     else diff_mode = full or incremental
+        rect rgba(120, 120, 120, 0.10)
+            Note over M,GC: 3b · Threads — [threads]
+            M->>GC: get_review_threads (GraphQL)
+            M->>M: threads_by_finding() · thread_replies()
+        end
+
         rect rgba(70, 130, 230, 0.10)
             Note over M,LLM: 4a · Re-check — [skip-check] [agent] [recheck] [status]
             M->>RC: skip_unchanged()
@@ -508,7 +518,7 @@ sequenceDiagram
             Note over M,LLM: 4b · Explanations — [explain] [agent] [status]
             opt a finding is open or reopened
                 M->>GC: get_pr_comments
-                M->>EX: developer_replies() → collect_explanations()
+                M->>EX: developer_replies(PR comments + thread replies) → collect_explanations()
                 loop each finding a trusted reply explains
                     EX->>LLM: explanation judge
                     LLM-->>EX: ExplanationVerdict
@@ -534,6 +544,12 @@ sequenceDiagram
             MEM->>GC: post_review_comment
             GC->>GH: AI Review comment
         end
+
+        rect rgba(120, 120, 120, 0.10)
+            Note over M,GH: 8 · Sync threads — [threads] (failures are warnings)
+            M->>M: plan_thread_actions()
+            M->>GC: post_inline_comments · reply_to_review_comment · set_thread_resolved
+        end
     end
 ```
 
@@ -542,11 +558,13 @@ sequenceDiagram
 | 1 | Boot | Token and LLM config checked before any write | `[start]` `[github]` `[config]` |
 | 2 | Memory | Newest valid state, or empty (section 6.2) | `[memory]` |
 | 3 | Context | PR data fetched; diff mode chosen (section 8.1); noop exits here, posting nothing | `[route]` `[exit]` |
+| 3b | Threads | The bot's inline threads read and mapped to findings; replies in them become explanation candidates (section 11.2). Unreadable → thread actions skipped this run | `[threads]` |
 | 4a | Re-check | Previous findings checked against the new code (section 8.2) | `[skip-check]` `[agent]` `[recheck]` `[status]` |
-| 4b | Explanations | Trusted developer replies judged (section 8.3); after 4a so a just-resolved finding is not judged | `[explain]` `[agent]` `[status]` |
+| 4b | Explanations | Trusted developer replies, in PR comments or threads, judged (section 8.3); after 4a so a just-resolved finding is not judged | `[explain]` `[agent]` `[status]` |
 | 5 | Review | Logic reviewer sees the diff and the up-to-date previous findings | `[agent]` `[review]` |
 | 6 | Dedupe, file | Repeats dropped; new findings get IDs and snippets (section 6.4) | `[dedupe]` `[file]` |
 | 7 | Post | Coverage recorded (`reviewed_sha`, `base_ref`, `base_merge_sha`, `file_shas` without deleted files); comment + state posted in one call | `[post]` `[exit]` `[done]` |
+| 8 | Sync threads | New inline comments for open findings on diff lines; one reply per status change (section 11.2) | `[threads]` |
 
 Steps 4a and 4b run **before** the reviewer so it is shown current statuses and does not repeat a resolved or dismissed finding.
 
@@ -561,6 +579,7 @@ Steps 4a and 4b run **before** the reviewer so it is shown current statuses and 
 | LLM provider error in any agent (rate limit, timeout, outage) | Exit 1, nothing posted — but **uncaught**: a traceback instead of a `[failed]` line, and one failing re-check call aborts the whole run (section 12) |
 | Re-check or judge reply unparseable twice | Not fatal: that finding keeps its status |
 | Head file unreadable (directory, over 1 MB) | Not fatal: that finding keeps its status |
+| Threads unreadable, or a thread post / reply / resolve fails | Not fatal: a warning; the summary and state are already saved. A failed post or reply is retried next run; a refused resolve is not (section 11.2) |
 
 Intent: one unclear finding should not block the review of the rest, and a broken review must not look like a clean one. The second always holds; the first holds for unparseable answers and unreadable files, not yet for provider errors.
 
@@ -668,6 +687,8 @@ flowchart TD
 
 A developer replies on the PR, e.g. `F003: false positive — the caller already checks this`. On the next push, step 4b runs; each subgraph is one function.
 
+**From Step 9b:** a developer can also reply "this is intentional because…" directly in the finding's inline thread, without the `F003:` prefix. The same rules apply: only the PR author or collaborators count, and the same judge decides (section 11.2).
+
 ```mermaid
 flowchart TD
     A{"main.py · _apply_developer_explanations<br/>any finding open / reopened?"} -->|no| SKIP["comments not read"]
@@ -746,7 +767,8 @@ Baseline: the agent can **read** and **comment**; it cannot approve, merge, or m
 
 | Threat | Mitigation |
 |---|---|
-| Over-privileged token | `contents: read` + `pull-requests: write` only; a called workflow cannot exceed the caller's grant; callers forward only provider keys |
+| Over-privileged token | `contents: read` + `pull-requests: write` only; a called workflow cannot exceed the caller's grant; callers forward only provider keys. `contents: write` is deliberately not granted, although resolving review threads appears to need it (section 11.2) |
+| Forged thread links (anyone can type the finding marker) | A thread belongs to a finding only if the bot wrote its first comment; only the bot's own replies count as status announcements |
 | Forged state (anyone can paste a block) | Only comments by the bot login are read; schema validation with `extra="forbid"`; invalid block → older one |
 | State block breaking out of its HTML comment | `<` / `>` escaped after serialisation |
 | Prompt injection via stored findings | Rendered one line each, whitespace collapsed, labelled as data |
@@ -784,7 +806,7 @@ The `pr-reviewer.flow` logger writes one line per stage, pinned to INFO so the a
 
 ### 9.5 Testing
 
-- pytest, fully offline: GitHub is mocked (`repo`/`client` injection, fakes in `tests/helpers.py`), LLMs are scripted fakes. 292 tests as of 2026-11-01.
+- pytest, fully offline: GitHub is mocked (`repo`/`client` injection, fakes in `tests/helpers.py`), LLMs are scripted fakes. 343 tests as of 2026-11-12.
 - Tests mirror the source tree; no `__init__.py` files (PEP 420 namespace packages, `pythonpath = ["."]`, `--import-mode=importlib`).
 - Each roadmap step closes with a live check on a real PR, recorded in the roadmap.
 
@@ -808,6 +830,8 @@ The `pr-reviewer.flow` logger writes one line per stage, pinned to INFO so the a
 | **Plain-English status labels**; logins without `@` | Raw lifecycle names | `rejected (developer)` was ambiguous to readers; `@` would re-notify on every review | 2026-11-01 |
 | **Post a fresh comment on every run with new code** | Skip when nothing changed; edit the last comment | The latest comment is the one place a reader looks, and it always matches the latest commit | 2026-11-01 |
 | **Summary comment now, inline threads in Step 9b**, `event="COMMENT"` only | Inline from the start; `APPROVE` / `REQUEST_CHANGES` | Inline threads need re-check outcomes to avoid noise; bot approval is gated by a repo setting and humans approve | 2026-10-25 |
+| **Threads next to the summary comment; found by marker; brought in line with the state** | Summary and state in the review body, comment id stored as `thread_id`, actions replay transitions | `create_review` doesn't return inline comment ids; resolving needs the GraphQL thread id; state loading stays unchanged; a failed thread action is retried by the next run | 2026-11-02 |
+| **Threads resolved by hand; one reply per status change, read from the bot's last reply** | Grant `contents: write`; a GitHub App token for the resolve; decide from the thread's resolved flag | `GITHUB_TOKEN` is refused `resolveReviewThread` without `contents: write`, which would also let it push code in every caller repo; with the resolve refused, the resolved flag never changes and replies would repeat on every push | 2026-11-12 |
 | **LangGraph 1.x, introduced in Step 10 as a pure refactor** | CrewAI; plain LangChain; graph from day one | Behaviour first, then structure, verified by equivalence ([`framework-decision.md`](framework-decision.md)) | 2026-10-22 |
 
 ---
@@ -856,20 +880,32 @@ flowchart TB
 
 ### 11.2 Inline review threads (Step 9b)
 
-One GitHub review per run (`create_review`, `event="COMMENT"`): the summary and state block in the review body, each reportable finding as an inline comment whose id is stored as `thread_id`.
+Threads are added **next to** the summary comment. The summary comment and its state block are unchanged, so state loading and saving (section 6.2) don't change.
 
-| Re-check outcome | Thread action |
-|---|---|
-| resolved | reply "✅ Resolved in `<sha>`", resolve the thread via GraphQL `resolveReviewThread` |
-| still open | nothing |
-| reopened | reply in the same thread |
-| developer reply in the thread | linked via `in_reply_to_id`; replaces the `F00x:` comment convention, same author filter |
+- **Finding a thread.** Each inline comment carries a hidden `<!-- ai-review-finding:F003 -->` marker. Every run reads all the PR's review threads through GraphQL (page by page) and maps them to findings by the marker in the thread's first comment, when the bot wrote it. Nothing about threads is stored in the state.
+- **Thread actions bring threads in line with the state; they don't replay transitions.** After the summary is posted (which saves the state), each finding's status is compared with what its thread was last told, read from the bot's latest status reply in it ("open" if there is none):
 
-GitHub rejects an inline comment outside the diff with a 422 that fails the whole review, so lines are checked against the patch hunks first and unplaceable findings go in the summary only. Outdated threads are re-posted at the line `locate_line` finds. State is loaded from review bodies and issue comments, so earlier PRs keep their state. Unverified: `resolveReviewThread` with `GITHUB_TOKEN`, and the exact 422 behaviour.
+| Finding status | Thread | Action |
+|---|---|---|
+| `open` / `reopened` | none, line in the PR diff | new inline comment; all of a run's new ones go in one `create_review(event="COMMENT")` |
+| `open` / `reopened` | none, line outside the diff | none: summary only |
+| `resolved` | not yet told "Fixed" | reply "✅ Fixed in `<sha>`", try `resolveReviewThread` |
+| `rejected` / `closed` | not yet told so | reply "💬 Dismissed" / "✅ Closed.", try to resolve |
+| `reopened` | last told fixed, dismissed or closed | reply "🔁 Came back in `<sha>`", try `unresolveReviewThread` |
+| anything else | | nothing |
+
+- **Resolving is by hand.** On PR #10, `GITHUB_TOKEN` (`contents: read`, `pull-requests: write`) could post and reply but was refused `resolveReviewThread`: `FORBIDDEN — Resource not accessible by integration`. Community reports say the mutation needs `contents: write`; GitHub doesn't document it. That grant would let the token push code in every caller repo, so it is not given: the bot replies, the developer clicks "Resolve". The bot still tries once per status change, so a token that is allowed (e.g. a future GitHub App token) resolves threads without code changes.
+- **Why the bot's last reply, not the resolved flag.** With the resolve refused, the flag never changes. Planning from it repeated every "Fixed" / "Dismissed" reply on every push. Reading the bot's own last reply gives exactly one reply per status change. Human comments never count, even if they copy the bot's wording.
+- **Placement.** GitHub rejects an inline comment outside the diff with a 422 error, and that fails the whole review. Lines are therefore checked first against the new-side hunk ranges of the whole PR diff (also on incremental runs).
+- **Explanations.** A developer can reply "this is intentional because…" right in the thread; before, they had to write `F003: …` in a PR comment. A non-bot reply in a thread is passed to the explanation judge as if it were a PR comment starting with the finding's ID. The same rules apply: only the PR author or collaborators count, the cutoff is the same, and the same judge decides. The `F00x:` convention still works.
+- **Failures.** Thread actions run after the state is saved, so a failure is logged and does not fail the run. Unreadable threads skip thread actions for that run; treating them as "no threads" would post duplicates. A failed post or reply is planned again by the next run; a refused resolve is not retried, and the warning says to resolve by hand.
+- **Cost.** No extra LLM calls.
+
+Out of scope: re-posting outdated threads at the moved line, links from the summary to threads, more than 100 comments in one thread (warned), automatic resolving. Verified live on PR #10: reading threads, posting, replying; the bot's GraphQL login (`github-actions`, `__typename: Bot`) and `Z` timestamps. Unverified: the exact 422 behaviour.
 
 ### 11.3 LangGraph graph (Step 10 onward)
 
-Step 10 is a pure refactor of `run_review` into `load_memory → build_diff → recheck → explain → review → judge_placeholder → update_memory → post_review`, verified by equivalence with the Step 9/9b scenarios. Steps 11–14 grow it into:
+Step 10 is a pure refactor of `run_review` into `load_memory → build_diff → recheck → explain → review → judge_placeholder → update_memory → post_review → sync_threads`, verified by equivalence with the Step 9/9b scenarios. Steps 11–14 grow it into:
 
 Each node is labelled with the Step 9 step it replaces. Solid nodes exist today as functions in `run_review`; dashed grey nodes are planned.
 
@@ -940,6 +976,9 @@ Read-only plain functions in `tools/`, bound to reviewers through the factory; M
 | "Overall" rates only new findings | Can say `approve` next to an open finding. Fix: Step 9 task 5 |
 | Explanation judge sees only the code around the finding | A plausible but false claim about another file can be accepted. Only trusted people can dismiss, and every dismissal shows who and why; Step 11 tools will let the judge check |
 | One re-check call per finding | Several findings in one edited file cost several calls; batch per file if cost matters |
+| Threads are not resolved automatically | `GITHUB_TOKEN` is refused `resolveReviewThread`; the bot replies and the developer resolves. Fix if wanted: a GitHub App token for the resolve only (section 11.2) |
+| Inline comments show the stored description | Cut at 300 chars with `…`; the summary comment has the full text |
+| Outdated threads stay where they were | A finding whose code moved keeps its thread on the old line; not re-posted |
 | Replies are read on the next push | No `issue_comment` trigger yet |
 | PR comments listed up to three times per run | Cheap; could be merged |
 | Dismissals saved before 2026-11-01 | Show the label without the "explained by" line |
@@ -1002,6 +1041,7 @@ github_agentic_pr_reviewer/
 │   ├── diff.py                        # choose_diff
 │   ├── recheck.py                     # skip check, re-check agent, apply outcomes
 │   ├── explanations.py                # developer explanations + judge
+│   ├── threads.py                     # inline threads: placement, lookup, action plan
 │   └── memory.py                      # state block, lifecycle, IDs, snippets, dedupe
 ├── graph/review_graph.py              # 📋 Step 10
 ├── tools/                             # 📋 Step 11
