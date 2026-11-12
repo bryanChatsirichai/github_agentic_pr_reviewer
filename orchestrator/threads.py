@@ -125,21 +125,26 @@ def plan_thread_actions(
     ``threads`` is ``threads_by_finding`` output, ``commentable`` is
     ``commentable_lines`` output. Per finding:
 
-    ====================  ===================  ==============================
-    status                thread               action
-    ====================  ===================  ==============================
-    open / reopened       none, line in diff   new inline comment
-    open / reopened       none, off the diff   nothing (summary only)
-    resolved              unresolved           reply "Fixed", resolve
-    rejected / closed     unresolved           reply "Dismissed"/"Closed",
+    =====================  ==================  ==============================
+    status                 thread              action
+    =====================  ==================  ==============================
+    open / reopened        none, line in diff  new inline comment
+    open / reopened        none, off the diff  nothing (summary only)
+    resolved               not told "Fixed"    reply "Fixed", resolve
+    rejected / closed      not told so         reply "Dismissed"/"Closed",
                                                resolve
-    reopened              resolved             reply "Came back", unresolve
+    reopened               last told fixed,    reply "Came back", unresolve
+                           dismissed or closed
     anything else                              nothing
-    ====================  ===================  ==============================
+    =====================  ==================  ==============================
 
-    Planning from the current state rather than from this run's changes
-    makes it self-healing: an action that failed is planned again next run.
-    An ``open`` finding whose thread a human resolved is left alone.
+    What a thread was last "told" is read from the bot's latest status
+    reply in it, not from its resolved flag: the CI token may not be
+    allowed to resolve threads, and a flag that never changes would make
+    every push repeat the reply. So each status change gets exactly one
+    reply, with one best-effort resolve or unresolve; a reply that failed
+    is planned again next run. An ``open`` finding whose thread a human
+    resolved is left alone.
     """
     plan = ThreadPlan()
     for finding in findings:
@@ -152,7 +157,7 @@ def plan_thread_actions(
                     NewThread(finding.id, finding.file, finding.line, _thread_body(finding))
                 )
             continue
-        reply = _status_reply(finding, thread["is_resolved"], head_sha)
+        reply = _status_reply(finding, _last_told(thread), head_sha)
         if reply is not None:
             text, resolve = reply
             plan.updates.append(
@@ -161,22 +166,54 @@ def plan_thread_actions(
     return plan
 
 
+#: Opening of each status reply, and the status it tells. Used both to
+#: write replies and to read back what a thread was last told.
+_FIXED = "✅ Fixed in "
+_DISMISSED = "💬 Dismissed"
+_CLOSED = "✅ Closed."
+_CAME_BACK = "🔁 Came back in "
+_TOLD = {
+    _FIXED: FindingStatus.RESOLVED,
+    _DISMISSED: FindingStatus.REJECTED,
+    _CLOSED: FindingStatus.CLOSED,
+    _CAME_BACK: FindingStatus.REOPENED,
+}
+
+
+def _last_told(thread: dict[str, Any]) -> FindingStatus:
+    """The status the bot last announced in ``thread``; ``open`` if none yet.
+
+    Only the bot's own replies count (the first comment is the bot's, and
+    ``threads_by_finding`` only returns threads it started).
+    """
+    bot = thread["comments"][0]["author"]
+    told = FindingStatus.OPEN
+    for comment in thread["comments"][1:]:
+        if comment["author"] != bot:
+            continue
+        for opening, status in _TOLD.items():
+            if comment["body"].startswith(opening):
+                told = status
+    return told
+
+
 def _status_reply(
-    finding: StoredFinding, is_resolved: bool, head_sha: str
+    finding: StoredFinding, told: FindingStatus, head_sha: str
 ) -> tuple[str, bool] | None:
-    """``(reply, resolve)`` when the thread no longer matches ``finding``, else None."""
+    """``(reply, resolve)`` when ``finding``'s status is news to the thread, else None."""
+    if finding.status is told:
+        return None
     short_sha = head_sha[:10]
-    if not is_resolved:
-        if finding.status is FindingStatus.RESOLVED:
-            return f"✅ Fixed in `{short_sha}`.", True
-        if finding.status is FindingStatus.REJECTED:
-            if finding.rejected_by == "developer":
-                return "💬 Dismissed: a developer's explanation was accepted.", True
-            return f"💬 Dismissed by the {finding.rejected_by}.", True
-        if finding.status is FindingStatus.CLOSED:
-            return "✅ Closed.", True
-    elif finding.status is FindingStatus.REOPENED:
-        return f"🔁 Came back in `{short_sha}`.", False
+    if finding.status is FindingStatus.RESOLVED:
+        return f"{_FIXED}`{short_sha}`.", True
+    if finding.status is FindingStatus.REJECTED:
+        if finding.rejected_by == "developer":
+            return f"{_DISMISSED}: a developer's explanation was accepted.", True
+        return f"{_DISMISSED} by the {finding.rejected_by}.", True
+    if finding.status is FindingStatus.CLOSED:
+        return _CLOSED, True
+    if finding.status is FindingStatus.REOPENED and told is not FindingStatus.OPEN:
+        return f"{_CAME_BACK}`{short_sha}`.", False
     return None
 
 

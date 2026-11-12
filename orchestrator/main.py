@@ -420,12 +420,23 @@ def _sync_threads(
     for update in plan.updates:
         try:
             reply_to_review_comment(pr_number, update.comment_id, update.reply)
-            set_thread_resolved(update.thread_id, update.resolve)
-            flow.info(
-                "[threads] %s %s", update.finding_id, "resolved" if update.resolve else "unresolved"
-            )
         except GithubException as exc:
-            flow.warning("[threads] %s thread not updated — %s", update.finding_id, exc)
+            flow.warning("[threads] %s reply not posted, retried next run — %s", update.finding_id, exc)
+            continue
+        # Best effort, not retried: the reply already records the status,
+        # and GITHUB_TOKEN without contents: write may not (un)resolve.
+        action = "resolved" if update.resolve else "unresolved"
+        try:
+            set_thread_resolved(update.thread_id, update.resolve)
+            flow.info("[threads] %s replied and %s", update.finding_id, action)
+        except GithubException as exc:
+            flow.warning(
+                "[threads] %s replied, but the thread could not be %s "
+                "(do it by hand) — %s",
+                update.finding_id,
+                action,
+                exc,
+            )
     if not plan.new_threads and not plan.updates:
         flow.info("[threads] threads already match the state — nothing to do")
 
