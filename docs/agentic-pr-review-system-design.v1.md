@@ -580,7 +580,7 @@ Steps 4a and 4b run **before** the reviewer so it is shown current statuses and 
 | LLM provider error in any agent (rate limit, timeout, outage) | Exit 1, nothing posted — but **uncaught**: a traceback instead of a `[failed]` line, and one failing re-check call aborts the whole run (section 12) |
 | Re-check or judge reply unparseable twice | Not fatal: that finding keeps its status |
 | Head file unreadable (directory, over 1 MB) | Not fatal: that finding keeps its status |
-| Threads unreadable, or a thread post / reply / resolve fails | Not fatal: a warning; the summary and state are already saved. A failed post or reply is retried next run; a refused resolve is not (section 11.2) |
+| Threads unreadable, or a thread post / reply / resolve fails | Not fatal: a warning; the summary and state are already saved. A failed post or reply is retried by the next run with new code (a noop re-run touches no threads); a refused resolve is not (section 11.2) |
 
 Intent: one unclear finding should not block the review of the rest, and a broken review must not look like a clean one. The second always holds; the first holds for unparseable answers and unreadable files, not yet for provider errors.
 
@@ -784,7 +784,7 @@ Baseline: the agent can **read** and **comment**; it cannot approve, merge, or m
 ### 9.2 Reliability
 
 - **Idempotent re-runs.** A re-run at the same commit is noop; a run cancelled mid-way saved nothing (saving is posting).
-- **Thread actions converge.** They are planned from the saved state and the bot's own last reply in each thread, so a failed post or reply is redone by the next run and a status change is announced exactly once (verified live on PR #10). Unreadable threads skip thread actions rather than risk duplicates.
+- **Thread actions converge.** They are planned from the saved state and the bot's own last reply in each thread, so a failed post or reply is redone by the next run with new code and a status change is announced exactly once (verified live on PR #10). Unreadable threads skip thread actions rather than risk duplicates.
 - **Graceful degradation, partial.** An unparseable answer or unreadable file keeps that finding's status. A provider error is not yet contained per finding and fails the whole run (section 7).
 - **State recovery.** A corrupt or forged newest block falls back to an older valid one.
 
@@ -832,7 +832,7 @@ The `pr-reviewer.flow` logger writes one line per stage, pinned to INFO so the a
 | **Plain-English status labels**; logins without `@` | Raw lifecycle names | `rejected (developer)` was ambiguous to readers; `@` would re-notify on every review | 2026-11-01 |
 | **Post a fresh comment on every run with new code** | Skip when nothing changed; edit the last comment | The latest comment is the one place a reader looks, and it always matches the latest commit | 2026-11-01 |
 | **Summary comment now, inline threads in Step 9b**, `event="COMMENT"` only | Inline from the start; `APPROVE` / `REQUEST_CHANGES` | Inline threads need re-check outcomes to avoid noise; bot approval is gated by a repo setting and humans approve | 2026-10-25 |
-| **Threads next to the summary comment; found by marker; brought in line with the state** | Summary and state in the review body, comment id stored as `thread_id`, actions replay transitions | `create_review` doesn't return inline comment ids; resolving needs the GraphQL thread id; state loading stays unchanged; a failed thread action is retried by the next run | 2026-11-02 |
+| **Threads next to the summary comment; found by marker; brought in line with the state** | Summary and state in the review body, comment id stored as `thread_id`, actions replay transitions | `create_review` doesn't return inline comment ids; resolving needs the GraphQL thread id; state loading stays unchanged; a failed thread action is retried by the next run with new code | 2026-11-02 |
 | **Threads resolved by hand; one reply per status change, read from the bot's last reply** | Grant `contents: write`; a GitHub App token for the resolve; decide from the thread's resolved flag | `GITHUB_TOKEN` is refused `resolveReviewThread` without `contents: write`, which would also let it push code in every caller repo; with the resolve refused, the resolved flag never changes and replies would repeat on every push | 2026-11-12 |
 | **LangGraph 1.x, introduced in Step 10 as a pure refactor** | CrewAI; plain LangChain; graph from day one | Behaviour first, then structure, verified by equivalence ([`framework-decision.md`](framework-decision.md)) | 2026-10-22 |
 
@@ -900,7 +900,7 @@ Threads are added **next to** the summary comment. The summary comment and its s
 - **Why the bot's last reply, not the resolved flag.** With the resolve refused, the flag never changes. Planning from it repeated every "Fixed" / "Dismissed" reply on every push. Reading the bot's own last reply gives exactly one reply per status change. Human comments never count, even if they copy the bot's wording.
 - **Placement.** GitHub rejects an inline comment outside the diff with a 422 error, and that fails the whole review. Lines are therefore checked first against the new-side hunk ranges of the whole PR diff (also on incremental runs).
 - **Explanations.** A developer can reply "this is intentional because…" right in the thread; before, they had to write `F003: …` in a PR comment. A non-bot reply in a thread is passed to the explanation judge as if it were a PR comment starting with the finding's ID. The same rules apply: only the PR author or collaborators count, the cutoff is the same, and the same judge decides. The `F00x:` convention still works.
-- **Failures.** Thread actions run after the state is saved, so a failure is logged and does not fail the run. Unreadable threads skip thread actions for that run; treating them as "no threads" would post duplicates. A failed post or reply is planned again by the next run; a refused resolve is not retried, and the warning says to resolve by hand.
+- **Failures.** Thread actions run after the state is saved, so a failure is logged and does not fail the run. Unreadable threads skip thread actions for that run; treating them as "no threads" would post duplicates. A failed post or reply is planned again by the next run **with new code**: a noop run ("Re-run job" at the same commit, or new commits outside the PR's files) exits before step 3b and touches no threads, keeping noop's "nothing posted" rule. A refused resolve is not retried, and the warning says to resolve by hand.
 - **Cost.** No extra LLM calls.
 
 Out of scope: re-posting outdated threads at the moved line, links from the summary to threads, more than 100 comments in one thread (warned), automatic resolving. Verified live on PR #10: reading threads, posting, replying; the bot's GraphQL login (`github-actions`, `__typename: Bot`) and `Z` timestamps. Unverified: the exact 422 behaviour.
@@ -980,6 +980,7 @@ Read-only plain functions in `tools/`, bound to reviewers through the factory; M
 | Rolling back the code can lose state | Older code rejects blocks with newer fields and falls back to an earlier block, whose lower `next_id` can reuse IDs already shown. Avoid rollbacks across schema changes, or bump `schema_version` |
 | Explanation judge sees only the code around the finding | A plausible but false claim about another file can be accepted. Only trusted people can dismiss, and every dismissal shows who and why; Step 11 tools will let the judge check |
 | One re-check call per finding | Several findings in one edited file cost several calls; batch per file if cost matters |
+| "Re-run job" does not retry a failed thread action | A same-commit re-run is noop and touches no threads; the failed post or reply is redone on the next push. The summary comment lists every finding meanwhile |
 | Threads are not resolved automatically | `GITHUB_TOKEN` is refused `resolveReviewThread`; the bot replies and the developer resolves. Fix if wanted: a GitHub App token for the resolve only (section 11.2) |
 | Inline comments show the stored description | Cut at 300 chars with `…`; the summary comment has the full text |
 | Outdated threads stay where they were | A finding whose code moved keeps its thread on the old line; not re-posted |

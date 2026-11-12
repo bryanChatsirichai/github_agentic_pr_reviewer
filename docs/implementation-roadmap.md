@@ -391,7 +391,7 @@ Every run with new code posts a fresh summary comment, so the latest bot comment
 **Design (2026-11-02):**
 - **Threads are added next to the summary comment.** State stays in the summary comment, so `load_memory` and `save_memory` don't change.
 - **Threads are found by marker, not stored.** Each inline comment carries a hidden marker, `<!-- ai-review-finding:F003 -->`, and each run reads the PR's threads with one GraphQL query. `thread_id` stays in the model, always `null`: every saved block contains it, so removing it would make them all fail validation.
-- **Thread actions bring threads in line with the state.** A failed action is retried by the next run.
+- **Thread actions bring threads in line with the state.** A failed action is retried by the next run with new code (a noop run touches no threads).
 - **No extra LLM calls.**
 
 Rationale: design section 11.2.
@@ -447,7 +447,7 @@ tests/orchestrator/test_threads.py
 
    **Done (2026-11-12).** Two rules added:
    - If the threads can't be read, thread actions are skipped for that run. Treating an unread list as "no threads" would post a duplicate comment for every open finding.
-   - A failed reply is retried next run. A failed resolve or unresolve is not: the reply already records the status, and the warning says to resolve by hand.
+   - A failed post or reply is retried by the next run with new code; a noop run (e.g. "Re-run job" at the same commit) exits before reading threads, so it doesn't retry them (bot finding F003 on PR #10). A failed resolve or unresolve is not retried: the reply already records the status, and the warning says to resolve by hand.
 
    A noop run doesn't read threads.
 

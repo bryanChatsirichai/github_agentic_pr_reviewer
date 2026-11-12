@@ -143,7 +143,7 @@ def plan_thread_actions(
     allowed to resolve threads, and a flag that never changes would make
     every push repeat the reply. So each status change gets exactly one
     reply, with one best-effort resolve or unresolve; a reply that failed
-    is planned again next run. An ``open`` finding whose thread a human
+    is planned again by the next run with new code. An ``open`` finding whose thread a human
     resolved is left alone.
     """
     plan = ThreadPlan()

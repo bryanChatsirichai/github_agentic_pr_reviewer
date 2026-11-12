@@ -416,7 +416,8 @@ def _sync_threads(
     threads: dict[str, dict] | None,
 ) -> None:
     """Bring the inline threads in line with the saved state; never raises
-    on a GitHub error. Whatever fails is planned again by the next run."""
+    on a GitHub error. A failed post or reply is planned again by the next
+    run with new code; a noop run returns before reading threads."""
     if threads is None:
         return
     plan = plan_thread_actions(
@@ -439,7 +440,7 @@ def _sync_threads(
         try:
             reply_to_review_comment(pr_number, update.comment_id, update.reply)
         except GithubException as exc:
-            flow.warning("[threads] %s reply not posted, retried next run — %s", update.finding_id, exc)
+            flow.warning("[threads] %s reply not posted, retried on the next push — %s", update.finding_id, exc)
             continue
         # Best effort, not retried: the reply already records the status,
         # and GITHUB_TOKEN without contents: write may not (un)resolve.
