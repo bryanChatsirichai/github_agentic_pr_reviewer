@@ -8,11 +8,13 @@ post a real GitHub review instead of a plain comment.
 so its field ``description``s are sent to the reviewer LLM as guidance.
 """
 
+from collections.abc import Sequence
 from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from models.finding import Finding, Severity
+from models.stored_finding import StoredFinding
 
 Rating = Literal["approve", "comment", "request_changes"]
 
@@ -42,16 +44,21 @@ class ReviewResult(BaseModel):
     )
 
 
-def derived_rating(findings: list[Finding]) -> str:
-    """Mechanical fallback rating for models that skip the rating field.
+def derived_rating(findings: Sequence[Finding | StoredFinding]) -> str:
+    """Rating implied by the severities alone, without asking a model.
 
-    A bare JSON array of findings is still accepted (older contract), but
-    then the rating is computed from the severities instead of trusted to
-    the model: blocking findings → request_changes, otherwise comment, and
-    a clean array → approve.
+    Blocking findings → request_changes, otherwise comment, and none →
+    approve. Used when the model returns a bare findings array without a
+    rating (older contract), and for the still-open previous findings the
+    reviewer's own rating doesn't cover.
     """
     if not findings:
         return "approve"
     if any(f.severity in _BLOCKING_SEVERITIES for f in findings):
         return "request_changes"
     return "comment"
+
+
+def worst_rating(*ratings: str) -> str:
+    """The most severe of ``ratings``: request_changes > comment > approve."""
+    return max(ratings, key=RATINGS.index)

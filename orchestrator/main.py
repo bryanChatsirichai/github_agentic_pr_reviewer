@@ -27,6 +27,7 @@ status change a ``[status]`` line. ``main`` adds ``[start]``,
 import argparse
 import logging
 import os
+import re
 
 from dotenv import load_dotenv
 from github import GithubException
@@ -47,7 +48,7 @@ from clients.github import (
 )
 from models.finding import FindingStatus
 from models.pr_context import PRContext
-from models.review_result import ReviewResult
+from models.review_result import ReviewResult, derived_rating, worst_rating
 from models.review_state import ReviewState
 from models.stored_finding import KNOWN_ISSUE_STATUSES, StoredFinding
 from orchestrator.context_builder import build_context
@@ -137,10 +138,14 @@ def render_comment(context: PRContext, result: ReviewResult) -> str:
     claimed while one is open. Without them, only the new findings.
     """
     files = context.summary.file_list
+    # The reviewer rates only this run's new findings; an earlier finding
+    # that is still open must not be hidden behind an "approve".
+    still_open = [f for f in context.previous_findings if f.status in EXPLAINABLE_STATUSES]
+    overall = worst_rating(result.overall_rating, derived_rating(still_open))
     lines = [
         "## Review Findings",
         "",
-        f"**Overall: {result.overall_rating}** · "
+        f"**Overall: {overall}** · "
         f"branch `{context.head_branch}` @ `{context.head_sha[:10]}` · "
         f"{len(files)} file(s) checked",
         "",
@@ -206,7 +211,7 @@ def _previous_line(finding: StoredFinding) -> str:
         # Backticks, not @: a mention would notify them on every review.
         # Backticks are stripped from the login so it cannot end the span.
         who = ", ".join(f"`{login.replace('`', '')}`" for login in finding.explained_by)
-        why = _one_line(finding.rejection_reason) or "no reason recorded"
+        why = _escape_markdown(_one_line(finding.rejection_reason)) or "no reason recorded"
         line += f"\n  - explained by {who}: {why}"
     return line
 
@@ -233,6 +238,19 @@ _STATUS_LABELS: dict[FindingStatus, tuple[str, str]] = {
 def _one_line(text: str) -> str:
     """Collapse all whitespace, newlines included, to single spaces."""
     return " ".join(text.split())
+
+
+#: Characters that start Markdown or HTML syntax in a GitHub comment.
+_MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()<>#+!|~])")
+
+
+def _escape_markdown(text: str) -> str:
+    """Backslash-escape Markdown and HTML syntax so ``text`` renders literally.
+
+    For text that came from a developer's reply via the judge: it must not
+    add links, images, HTML or formatting to the bot's comment.
+    """
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", text)
 
 
 def _files_section(files: list[str], inline_limit: int = 10) -> str:

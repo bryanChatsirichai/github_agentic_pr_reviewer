@@ -14,7 +14,7 @@ import orchestrator.main as main_module
 from agents.reviewer_agents.parser import FindingParseError
 from models.context_summary import ContextSummary
 from models.explanation_verdict import ExplanationVerdict
-from models.finding import FindingStatus
+from models.finding import FindingStatus, Severity
 from models.recheck_verdict import RecheckVerdict
 from models.review_result import ReviewResult
 from models.review_state import ReviewState
@@ -622,8 +622,8 @@ def test_render_comment_says_who_dismissed_a_finding_and_why() -> None:
     )
 
     # Logins in code spans (no @ notification, no backtick break-out);
-    # the reason collapsed so it cannot start a heading.
-    assert "  - explained by `alice`, `bob`: Caller ## checks it" in body
+    # the reason collapsed to one line and escaped so it cannot start a heading.
+    assert r"  - explained by `alice`, `bob`: Caller \#\# checks it" in body
 
 
 def test_render_comment_handles_a_dismissal_saved_without_who_or_why() -> None:
@@ -841,3 +841,49 @@ def test_main_keeps_the_reply_when_the_token_cannot_resolve(monkeypatch, stub_re
 
     assert [n for n, _, _ in stub_review["thread_calls"]] == ["reply"]
     assert "F001 replied, but the thread could not be resolved" in caplog.text
+
+
+# --- Step 9 task 5: rating and escaping -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("llm_rating", "previous", "shown"),
+    [
+        # A still-open earlier finding outranks a clean new diff.
+        ("approve", [make_stored_finding(severity=Severity.MEDIUM)], "comment"),
+        ("approve", [make_stored_finding(status=FindingStatus.REOPENED,
+                                         severity=Severity.HIGH)], "request_changes"),
+        # Never lowered: the reviewer's own verdict on new findings stands.
+        ("request_changes", [make_stored_finding(severity=Severity.LOW)], "request_changes"),
+        # Fixed or dismissed findings don't count.
+        ("approve", [make_stored_finding(status=FindingStatus.RESOLVED,
+                                         severity=Severity.HIGH),
+                     make_stored_finding(id="F002", status=FindingStatus.REJECTED,
+                                         rejected_by="developer")], "approve"),
+    ],
+    ids=["open-medium", "reopened-high", "never-lowered", "only-closed-ones"],
+)
+def test_render_comment_rates_still_open_previous_findings(llm_rating, previous, shown) -> None:
+    body = render_comment(
+        make_context(previous_findings=previous), ReviewResult(overall_rating=llm_rating)
+    )
+
+    assert f"**Overall: {shown}**" in body
+
+
+def test_render_comment_escapes_markdown_in_the_dismissal_reason() -> None:
+    # The reason is LLM-written from a developer's reply, so it must not be
+    # able to add links, images, HTML or formatting to the bot's comment.
+    dismissed = make_stored_finding(
+        status=FindingStatus.REJECTED, rejected_by="developer", explained_by=["alice"],
+        rejection_reason="See [docs](https://evil.example) **now** <img src=x> `code`",
+    )
+
+    body = render_comment(
+        make_context(previous_findings=[dismissed]), ReviewResult(overall_rating="approve")
+    )
+
+    assert (
+        r"explained by `alice`: See \[docs\]\(https://evil.example\) "
+        r"\*\*now\*\* \<img src=x\> \`code\`"
+    ) in body
