@@ -8,12 +8,14 @@ step  what                         log tags
 ====  ===========================  =====================================
 1     load memory                  ``[memory]``
 2     build PR context, pick diff  ``[route]``, ``[exit]`` on noop
+2b    read inline review threads   ``[threads]``
 3a    re-check previous findings   ``[skip-check]`` ``[recheck]`` ``[status]``
 3b    developer explanations       ``[explain]`` ``[status]``
 4     logic reviewer               ``[review]``
 5     drop duplicates              ``[dedupe]``
 6     file new findings            ``[file]``
 7     post comment + state block   ``[post]``, ``[exit]``
+8     sync inline threads          ``[threads]``
 ====  ===========================  =====================================
 
 Every LLM agent built or skipped logs an ``[agent]`` line, and every
@@ -37,6 +39,10 @@ from clients.github import (
     get_file_content,
     get_merge_base_sha,
     get_pr_comments,
+    get_review_threads,
+    post_inline_comments,
+    reply_to_review_comment,
+    set_thread_resolved,
     verify_connection,
 )
 from models.finding import FindingStatus
@@ -65,6 +71,12 @@ from orchestrator.recheck import (
     build_rechecker,
     recheck_findings,
     skip_unchanged,
+)
+from orchestrator.threads import (
+    commentable_lines,
+    plan_thread_actions,
+    thread_replies,
+    threads_by_finding,
 )
 
 load_dotenv()
@@ -286,6 +298,10 @@ def run_review(pr_number: int) -> ReviewResult | None:
 
     head_files = _HeadFiles(context.head_sha)
 
+    # 2b. Threads: read before the explanations, since a reply in a
+    #     finding's thread counts as one. None when they could not be read.
+    threads = _read_threads(pr_number)
+
     # 3. Previous findings are brought up to date before the reviewer runs,
     #    so it sees their current statuses and file names and does not
     #    repeat them.
@@ -294,7 +310,9 @@ def run_review(pr_number: int) -> ReviewResult | None:
     state, context = _recheck_previous(state, context, head_files)
     # 3b. Explanations: was it wrong in the first place (rejected)? After
     #     3a, so a finding that was just resolved is not judged.
-    state, context = _apply_developer_explanations(pr_number, state, context, head_files)
+    state, context = _apply_developer_explanations(
+        pr_number, state, context, head_files, thread_replies(threads or {}, resolve_bot_login())
+    )
 
     # 4. Review: the reviewer agent looks at the diff for new issues.
     reviewer_name = "logic-reviewer"
@@ -351,7 +369,65 @@ def run_review(pr_number: int) -> ReviewResult | None:
         len(filed),
         len(state.findings),
     )
+
+    # 8. Threads: after the post, so they follow the state that was saved.
+    #    A failure here is only a warning — the review itself is out.
+    _sync_threads(pr_number, state, context, threads)
     return result
+
+
+def _read_threads(pr_number: int) -> dict[str, dict] | None:
+    """The bot's review threads by finding id, or None if they could not be read.
+
+    None is not the same as "no threads": treating a failed read as empty
+    would post a duplicate inline comment for every open finding.
+    """
+    try:
+        threads = threads_by_finding(get_review_threads(pr_number), resolve_bot_login())
+    except GithubException as exc:
+        flow.warning("[threads] could not read review threads, skipping them — %s", exc)
+        return None
+    flow.info("[threads] %d finding thread(s) on the PR", len(threads))
+    return threads
+
+
+def _sync_threads(
+    pr_number: int,
+    state: ReviewState,
+    context: PRContext,
+    threads: dict[str, dict] | None,
+) -> None:
+    """Bring the inline threads in line with the saved state; never raises
+    on a GitHub error. Whatever fails is planned again by the next run."""
+    if threads is None:
+        return
+    plan = plan_thread_actions(
+        state.findings, threads, commentable_lines(context.changed_files), context.head_sha
+    )
+    if plan.new_threads:
+        try:
+            post_inline_comments(
+                pr_number,
+                context.head_sha,
+                "🤖 AI Review: findings on their lines. The summary comment lists all of them.",
+                [t.as_review_comment() for t in plan.new_threads],
+            )
+            flow.info(
+                "[threads] posted %s", ", ".join(t.finding_id for t in plan.new_threads)
+            )
+        except GithubException as exc:
+            flow.warning("[threads] inline comments not posted — %s", exc)
+    for update in plan.updates:
+        try:
+            reply_to_review_comment(pr_number, update.comment_id, update.reply)
+            set_thread_resolved(update.thread_id, update.resolve)
+            flow.info(
+                "[threads] %s %s", update.finding_id, "resolved" if update.resolve else "unresolved"
+            )
+        except GithubException as exc:
+            flow.warning("[threads] %s thread not updated — %s", update.finding_id, exc)
+    if not plan.new_threads and not plan.updates:
+        flow.info("[threads] threads already match the state — nothing to do")
 
 
 class _HeadFiles:
@@ -424,10 +500,17 @@ def _recheck_previous(
 
 
 def _apply_developer_explanations(
-    pr_number: int, state: ReviewState, context: PRContext, head_files: _HeadFiles
+    pr_number: int,
+    state: ReviewState,
+    context: PRContext,
+    head_files: _HeadFiles,
+    in_thread_replies: list[dict],
 ) -> tuple[ReviewState, PRContext]:
-    """Dismiss findings a developer explained in a PR comment, if the judge agrees.
+    """Dismiss findings a developer explained, if the judge agrees.
 
+    An explanation is a PR comment naming the finding (``F003: …``) or a
+    reply in the finding's inline thread (``in_thread_replies``, from
+    ``thread_replies``). Both go through the same cutoff and trust rule.
     Returns the state and context with the updated findings. Comments are
     only fetched when some finding could be dismissed (``open`` or
     ``reopened``). See ``orchestrator/explanations.py`` for whose replies
@@ -437,8 +520,12 @@ def _apply_developer_explanations(
         flow.info("[explain] no open finding to explain — comments not read")
         return state, context
 
+    # Oldest first, as developer_replies expects, with both sources mixed.
+    comments = sorted(
+        get_pr_comments(pr_number) + in_thread_replies, key=lambda c: c["created_at"]
+    )
     replies = developer_replies(
-        get_pr_comments(pr_number),
+        comments,
         pr_author=context.author,
         bot_login=resolve_bot_login(),
     )

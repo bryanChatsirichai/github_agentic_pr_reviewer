@@ -11,6 +11,7 @@ No globals are mutated at import time.
 
 import logging
 import os
+from datetime import datetime
 from typing import Any
 
 from dotenv import load_dotenv
@@ -42,7 +43,38 @@ __all__ = [
     "get_existing_review_comments",
     "get_pr_comments",
     "post_review_comment",
+    "get_review_threads",
+    "post_inline_comments",
+    "reply_to_review_comment",
+    "set_thread_resolved",
 ]
+
+#: Review threads and their comments read per run. PyGithub has no review-
+#: thread API (threads and their resolved flag exist only in GraphQL).
+_REVIEW_THREADS_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        pageInfo { hasNextPage }
+        nodes {
+          id
+          isResolved
+          comments(first: 100) {
+            nodes {
+              databaseId
+              body
+              createdAt
+              authorAssociation
+              author { __typename login }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
 
 
 def _get_client() -> Github:
@@ -315,6 +347,105 @@ def post_review_comment(
     return comment.id
 
 
+def get_review_threads(
+    pr_number: int,
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> list[dict[str, Any]]:
+    """Return PR ``pr_number``'s inline review threads (the first 100).
+
+    Each entry is ``{"id": GraphQL node id (for ``set_thread_resolved``),
+    "is_resolved": bool, "comments": [...]}``, comments oldest first and
+    shaped like ``get_pr_comments`` entries, so both can feed the same
+    explanation cutoff. A comment's ``id`` is its REST review-comment id
+    (for ``reply_to_review_comment``) — a separate id space from issue
+    comments. More than 100 threads logs a warning and the rest are not read.
+    """
+    repo = repo or _get_repo(client)
+    _, data = repo.requester.graphql_query(
+        _REVIEW_THREADS_QUERY,
+        {"owner": repo.owner.login, "name": repo.name, "number": pr_number},
+    )
+    threads = data["data"]["repository"]["pullRequest"]["reviewThreads"]
+    if threads["pageInfo"]["hasNextPage"]:
+        logger.warning(
+            "PR #%s has more than 100 review threads; only the first 100 are read",
+            pr_number,
+        )
+    return [
+        {
+            "id": node["id"],
+            "is_resolved": node["isResolved"],
+            "comments": [_thread_comment(c) for c in node["comments"]["nodes"]],
+        }
+        for node in threads["nodes"]
+    ]
+
+
+def post_inline_comments(
+    pr_number: int,
+    head_sha: str,
+    body: str,
+    comments: list[dict[str, Any]],
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> int:
+    """Post ``comments`` as one review on commit ``head_sha``; return its id.
+
+    Each comment is ``{"path", "line", "side": "RIGHT", "body"}``. The review
+    is always ``COMMENT``: approving or requesting changes is left to
+    humans, and for ``github-actions[bot]`` it is blocked by a repo setting
+    that is off by default. GitHub rejects the whole review with 422 if any
+    comment's line is outside the diff, so callers place comments only on
+    commentable lines.
+    """
+    repo = repo or _get_repo(client)
+    pr = repo.get_pull(pr_number)
+    # create_review asserts a Commit object; a bare SHA string fails.
+    review = pr.create_review(
+        commit=repo.get_commit(head_sha),
+        body=body,
+        event="COMMENT",
+        comments=comments,
+    )
+    logger.debug("Posted review #%s with %d inline comment(s)", review.id, len(comments))
+    return review.id
+
+
+def reply_to_review_comment(
+    pr_number: int,
+    comment_id: int,
+    body: str,
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> int:
+    """Reply in the thread of review comment ``comment_id``; return the reply id."""
+    pr = (repo or _get_repo(client)).get_pull(pr_number)
+    reply = pr.create_review_comment_reply(comment_id, body)
+    return reply.id
+
+
+def set_thread_resolved(
+    thread_id: str,
+    resolved: bool,
+    *,
+    repo: Repository | None = None,
+    client: Github | None = None,
+) -> bool:
+    """Resolve (or unresolve) review thread ``thread_id``, a GraphQL node id.
+
+    Returns the thread's resolved flag as GitHub reports it afterwards.
+    """
+    mutation = "resolveReviewThread" if resolved else "unresolveReviewThread"
+    _, data = (repo or _get_repo(client)).requester.graphql_named_mutation(
+        mutation, {"threadId": thread_id}, "thread { isResolved }"
+    )
+    return data["thread"]["isResolved"]
+
+
 def _file_entry(f: File) -> dict[str, Any]:
     """One PyGithub ``File`` as the plain dict ``get_pr_files`` documents."""
     return {
@@ -325,6 +456,29 @@ def _file_entry(f: File) -> dict[str, Any]:
         "deletions": f.deletions,
         "previous_filename": f.previous_filename,
         "patch": f.patch,
+    }
+
+
+def _thread_comment(node: dict[str, Any]) -> dict[str, Any]:
+    """One GraphQL review comment in ``get_pr_comments``' shape.
+
+    Two GraphQL differences are normalised away, because callers compare
+    these values with REST ones: GraphQL names a GitHub App by its bare
+    slug (``github-actions``) where REST says ``github-actions[bot]``, and
+    it writes UTC as ``Z`` where ``datetime.isoformat`` writes ``+00:00``.
+    """
+    author = node["author"]  # None when the account was deleted
+    login = None
+    if author:
+        login = author["login"]
+        if author["__typename"] == "Bot":
+            login += "[bot]"
+    return {
+        "id": node["databaseId"],
+        "body": node["body"] or "",
+        "created_at": datetime.fromisoformat(node["createdAt"]).isoformat(),
+        "author": login,
+        "author_association": node["authorAssociation"],
     }
 
 
