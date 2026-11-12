@@ -396,7 +396,7 @@ Every run with new code posts a fresh summary comment, so the latest bot comment
 
 Rationale: design section 11.2.
 
-**Status (2026-11-12):** Tasks 1–7 built and partly verified live on PR #10. Not ticked: three live checks remain (below), and the bot can't resolve threads with `GITHUB_TOKEN`, so developers resolve them by hand (Task 6).
+**Status (2026-11-12):** Tasks 1–7 built and partly verified live on PR #10. Not ticked: two live checks remain (a finding outside the diff, and "🔁 Came back"; below). The bot can't resolve threads with `GITHUB_TOKEN`, so developers resolve them by hand (Task 6).
 
 **Creates:**
 
@@ -480,7 +480,7 @@ tests/orchestrator/test_threads.py
 - [x] fixing a finding gets a "✅ Fixed" reply (PR #10: F002 at `10b4dfc`). The thread stays unresolved by design (Task 6) — the developer resolves it;
 - [ ] reintroducing it gets a "🔁 Came back" reply;
 - [x] a collaborator's reply in a thread dismisses the finding (PR #10: F001 → `💬 dismissed (developer explained)`, reply "💬 Dismissed" posted);
-- [ ] a push with no status changes adds no thread comments. Offline: `test_plan_does_not_repeat_a_reply_when_resolving_failed`; a dry run of the planner on PR #10's live threads and state plans no actions. Still to see on the next push.
+- [x] a push with no status changes adds no thread comments. PR #10 at `944949f` (run 43229116729, attempt 2): `[threads] threads already match the state — nothing to do`; F001 and F002 still have exactly one bot reply each, although both threads are unresolved. Attempt 1 failed before any write on GitHub API 503s (`requests.exceptions.RetryError`, not in `main()`'s handled errors, so a traceback instead of a `[failed]` line).
 
 ---
 
