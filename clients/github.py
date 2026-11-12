@@ -391,9 +391,7 @@ def get_review_threads(
                     "comments": [_thread_comment(c) for c in node["comments"]["nodes"]],
                 }
             )
-        if not page["pageInfo"]["hasNextPage"]:
-            return threads
-        cursor = page["pageInfo"]["endCursor"]
+        return threads
 
 
 def post_inline_comments(
