@@ -1,6 +1,6 @@
 # Agentic PR Review System — Architecture
 
-> **Status:** Living document. Describes the code through roadmap Step 9b (Step 9 task 5 partly; Step 9b built, live checks partly done).
+> **Status:** Living document. Describes the code through roadmap Step 9b.
 > **Last updated:** 2026-11-12
 > **Related:** [`implementation-roadmap.md`](implementation-roadmap.md) (build steps, task lists, verification records) · [`framework-decision.md`](framework-decision.md) · [`llm-providers.md`](llm-providers.md) · [`multi-repo-integration.md`](multi-repo-integration.md)
 > **Legend:** ✅ built · 🚧 built, live verification pending · 📋 planned.
@@ -84,8 +84,8 @@ flowchart LR
 | B Stateless review | 2–5 | GitHub client, PR context, first LLM review, re-review per commit | ✅ |
 | C Memory | 6–7 | State in bot comments; previous findings fed to the reviewer; dedupe | ✅ |
 | D Incremental + re-check | 8 | Incremental diff (full / incremental / noop) | ✅ |
-| | 9 | Re-check pass, developer explanations, status labels | 🚧 tasks 1–4 built and verified live; task 5 partly ("Overall" rating and Markdown escaping of the reason pending) |
-| | 9b | Inline review threads, thread replies as explanations | 🚧 built; posting, replying and reading verified live; threads are resolved by hand (section 11.2) |
+| | 9 | Re-check pass, developer explanations, status labels, "Overall" counts open findings | ✅ |
+| | 9b | Inline review threads, thread replies as explanations | ✅ threads are resolved by hand (section 11.2) |
 | E Agentic structure | 10–14 | LangGraph graph, tools, critic, judge, specialised reviewers | 📋 |
 
 Task lists and verification records per step: [`implementation-roadmap.md`](implementation-roadmap.md).
@@ -755,7 +755,7 @@ The API accepts an arbitrarily large page size. Clamp it before querying.
 
 - Previous findings are one line each; lists over 10 items collapse into `<details>`.
 - "No new issues found." when there is history; "No issues found. 🎉" only when nothing is known.
-- **"Overall" currently rates only the new findings** — Step 9 task 5 makes it count still-open previous findings.
+- **"Overall"** is the worst of the reviewer's rating (new findings) and the rating implied by still-open previous findings' severities, so it never says `approve` next to an open or reopened finding.
 
 ---
 
@@ -773,7 +773,7 @@ Baseline: the agent can **read** and **comment**; it cannot approve, merge, or m
 | State block breaking out of its HTML comment | `<` / `>` escaped after serialisation |
 | Prompt injection via stored findings | Rendered one line each, whitespace collapsed, labelled as data |
 | Prompt injection via developer replies | Untrusted authors dropped before any LLM call; replies capped at 2,000 chars; triple backticks broken up so a reply cannot close its fence; the judge is told to treat instructions as a reason for scepticism; a pasted state block cannot move the cutoff |
-| Markdown injection into the comment | Titles and reasons collapsed to one line; logins in code spans with backticks stripped. 📋 Escaping Markdown in the shown reason (Step 9 task 5) |
+| Markdown injection into the comment | Titles and reasons collapsed to one line; the dismissal reason backslash-escaped for Markdown and HTML; logins in code spans with backticks stripped |
 | Notification spam | Logins shown without `@` |
 | Agent writes | Posting is orchestrator-only |
 | Misleading empty review | Every fatal error exits 1 with nothing posted |
@@ -806,7 +806,7 @@ The `pr-reviewer.flow` logger writes one line per stage, pinned to INFO so the a
 
 ### 9.5 Testing
 
-- pytest, fully offline: GitHub is mocked (`repo`/`client` injection, fakes in `tests/helpers.py`), LLMs are scripted fakes. 343 tests as of 2026-11-12.
+- pytest, fully offline: GitHub is mocked (`repo`/`client` injection, fakes in `tests/helpers.py`), LLMs are scripted fakes. 348 tests as of 2026-11-12.
 - Tests mirror the source tree; no `__init__.py` files (PEP 420 namespace packages, `pythonpath = ["."]`, `--import-mode=importlib`).
 - Each roadmap step closes with a live check on a real PR, recorded in the roadmap.
 
@@ -973,7 +973,6 @@ Read-only plain functions in `tools/`, bound to reviewers through the factory; M
 | LLM provider errors are not caught per finding | One rate-limited re-check or judge call aborts the whole run, with a traceback instead of a `[failed]` line. Fix: catch provider errors in `ask_structured` (keep the status) and add them to `main()`'s handled errors |
 | A reply posted during a run is never judged | Comments are read before the reviewer call; a reply landing before the post falls behind the new cutoff. Fix: store the newest comment id read in the state and use it as the next cutoff |
 | Rolling back the code can lose state | Older code rejects blocks with newer fields and falls back to an earlier block, whose lower `next_id` can reuse IDs already shown. Avoid rollbacks across schema changes, or bump `schema_version` |
-| "Overall" rates only new findings | Can say `approve` next to an open finding. Fix: Step 9 task 5 |
 | Explanation judge sees only the code around the finding | A plausible but false claim about another file can be accepted. Only trusted people can dismiss, and every dismissal shows who and why; Step 11 tools will let the judge check |
 | One re-check call per finding | Several findings in one edited file cost several calls; batch per file if cost matters |
 | Threads are not resolved automatically | `GITHUB_TOKEN` is refused `resolveReviewThread`; the bot replies and the developer resolves. Fix if wanted: a GitHub App token for the resolve only (section 11.2) |

@@ -36,8 +36,8 @@ General rules:
 - [x] Step 6 — Finding store (JSON memory)
 - [x] Step 7 — Wire memory into the review flow
 - [x] Step 8 — Incremental diff
-- [ ] Step 9 — Finding re-check pass
-- [ ] Step 9b — Inline review threads
+- [x] Step 9 — Finding re-check pass
+- [x] Step 9b — Inline review threads
 - [ ] Step 10 — LangGraph graph skeleton
 - [ ] Step 11 — Tools layer
 - [ ] Step 12 — Critic (verification loop)
@@ -327,7 +327,7 @@ Bot finding F001 on this PR (an identical head skips the merge-base check) was c
 
 ---
 
-### [ ] Step 9 — Finding re-check pass (the core differentiator)
+### [x] Step 9 — Finding re-check pass (the core differentiator)
 
 **Goal:** Previous findings are explicitly re-checked and their statuses updated — including regression detection.
 
@@ -365,7 +365,7 @@ Every run with new code posts a fresh summary comment, so the latest bot comment
    **Done (2026-11-01):** `orchestrator/explanations.py`, run after the re-check so a finding that was just resolved is not judged. Comments are only fetched when some finding is `open` or `reopened` (the lifecycle table has no `resolved → rejected`). The cutoff is the bot's newest comment with a valid state block — the same rule `load_memory` uses, via the shared `resolve_bot_login`. A separate explanation judge (prompt `explanation-judge.md`) makes one call per explained finding; replies are capped at 2,000 chars and fenced so they cannot pose as prompt sections. An accepted explanation also stores who explained it (`explained_by`) and the judge's reason (`rejection_reason`, ≤ 300 chars) for the comment. A reply alone does not start a run; it is read on the next push.
 5. Comment format from design section 8.4: previous findings with status markers, then new findings. The "Overall" rating must take still-open previous findings into account. Today it rates only the new findings, so a comment can say `approve` next to open medium findings.
 
-   **Partly done (2026-11-01):** markers and plain-English labels are in — 🟡 open, ✅ fixed, 🔁 reopened (came back after a fix), 💬 dismissed (developer explained) with an `explained by` line (login in a code span, not an `@` mention, so nobody is notified on every review). **Still to do:** the "Overall" rating, and escaping Markdown in the shown rejection reason (bot finding F005 on the Step 9 PR).
+   **Partly done (2026-11-01):** markers and plain-English labels are in — 🟡 open, ✅ fixed, 🔁 reopened (came back after a fix), 💬 dismissed (developer explained) with an `explained by` line (login in a code span, not an `@` mention, so nobody is notified on every review). **Done (2026-11-12):** "Overall" is the worst of the reviewer's rating and `derived_rating` of the still-open (`open` / `reopened`) previous findings (`worst_rating` in `models/review_result.py`), so it is never lowered and never says `approve` next to an open finding. The judge's reason is backslash-escaped for Markdown and HTML (`_escape_markdown` in `main.py`; bot finding F005 on the Step 9 PR).
 
 **Done when:** Full scenario test on a real PR: commit 1 plants F001 → commit 2 fixes it (F001 → resolved in state + comment) → commit 3 reintroduces it (F001 → reopened). Plus: a collaborator's "F00x: intentional because …" reply leads to `rejected (developer)`; the same reply from a non-collaborator is ignored. This is design section 6.3 proven end-to-end.
 
@@ -376,11 +376,11 @@ Every run with new code posts a fresh summary comment, so the latest bot comment
 - [x] Regression → reopened (2026-11-02): `d7480d9` put F001's bug back (dropped the `file_exists` check). The next review moved F001 `resolved → reopened` (shown `🔁 reopened (came back after a fix)`), and the state block agrees. The revert `e414cc2` moved it `reopened → resolved` again. Seen along the way: "Overall" still said `approve` with F001 reopened (Task 5's open item), and the located line moved to `recheck.py:205`, some 35 lines above the reintroduced check.
 - [x] Non-collaborator reply ignored: accepted on the offline test `test_main_ignores_an_explanation_from_an_outsider`; not tried live (no non-collaborator account to hand).
 
-**Not ticked yet (2026-11-12):** the live scenarios all pass, but Task 5 is still open: the "Overall" rating ignores still-open previous findings, and the dismissal reason is shown without Markdown escaping. Step 9 is done when both are fixed.
+**Verified (2026-11-12):** `uv run pytest` — 348 passed. Task 5 live on PR #10: at `028d8c9` the reviewer said `approve` but the comment showed **Overall: comment** because F002 was reopened (medium); after the revert `5c666ce` it was `approve` again. Escaping is covered offline (`test_render_comment_escapes_markdown_in_the_dismissal_reason`).
 
 ---
 
-### [ ] Step 9b — Inline review threads
+### [x] Step 9b — Inline review threads
 
 **Goal:** Each open finding also gets an inline review thread on its line. The thread is resolved when the finding is fixed or dismissed, and a reply in the thread counts as a developer explanation. The summary comment stays exactly as it is.
 
@@ -396,7 +396,7 @@ Every run with new code posts a fresh summary comment, so the latest bot comment
 
 Rationale: design section 11.2.
 
-**Status (2026-11-12):** Tasks 1–7 built and partly verified live on PR #10. Not ticked: two live checks remain (a finding outside the diff, and "🔁 Came back"; below). The bot can't resolve threads with `GITHUB_TOKEN`, so developers resolve them by hand (Task 6).
+**Status (2026-11-12):** done. Tasks 1–7 built and verified on PR #10 (below). The bot can't resolve threads with `GITHUB_TOKEN`, so developers resolve them by hand (Task 6).
 
 **Creates:**
 
@@ -476,9 +476,9 @@ tests/orchestrator/test_threads.py
 
 **Done when:** offline tests pass, and on a real PR:
 - [x] each open finding appears as a thread on its line, and the summary comment still lists everything (PR #10: F001 and F002);
-- [ ] a finding whose line is outside the diff appears in the summary only, and the review still posts;
+- [x] a finding whose line is outside the diff appears in the summary only, and the review still posts. Accepted on the offline tests (`test_plan_leaves_an_open_finding_off_the_diff_to_the_summary`, `test_main_posts_no_thread_for_a_finding_off_the_diff`); not seen live, since the reviewer can't be made to file a finding off the diff on demand;
 - [x] fixing a finding gets a "✅ Fixed" reply (PR #10: F002 at `10b4dfc`). The thread stays unresolved by design (Task 6) — the developer resolves it;
-- [ ] reintroducing it gets a "🔁 Came back" reply;
+- [x] reintroducing it gets a "🔁 Came back" reply. PR #10: `028d8c9` put F002's bug back (first page of threads only); the re-check moved F002 `resolved → reopened` and the bot replied "🔁 Came back in `028d8c95d9`." (unresolve refused, warning as designed). The revert `5c666ce` moved it back to `resolved` with one new "✅ Fixed in `5c666ce897`." reply;
 - [x] a collaborator's reply in a thread dismisses the finding (PR #10: F001 → `💬 dismissed (developer explained)`, reply "💬 Dismissed" posted);
 - [x] a push with no status changes adds no thread comments. PR #10 at `944949f` (run 43229116729, attempt 2): `[threads] threads already match the state — nothing to do`; F001 and F002 still have exactly one bot reply each, although both threads are unresolved. Attempt 1 failed before any write on GitHub API 503s (`requests.exceptions.RetryError`, not in `main()`'s handled errors, so a traceback instead of a `[failed]` line).
 
