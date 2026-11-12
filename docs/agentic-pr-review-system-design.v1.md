@@ -37,16 +37,16 @@
 
 ## 1. Summary
 
-An AI reviewer for GitHub pull requests. It reviews a PR when it is opened and again on every push. Unlike a stateless reviewer, it keeps **per-PR memory** of its findings, **re-checks** them against new code (fixed → resolved, came back → reopened), lets developers **dismiss** a wrong finding by explaining it in a comment, and does not re-report issues it already raised.
+An AI reviewer for GitHub pull requests. It reviews a PR when it is opened and again on every push. Unlike a stateless reviewer, it keeps **per-PR memory** of its findings, **re-checks** them against new code (fixed → resolved, came back → reopened), lets developers **dismiss** a wrong finding by explaining it in a comment or in the finding's inline thread, and does not re-report issues it already raised. Each open finding also gets an **inline thread** on its code line, which the bot updates once per status change.
 
 ```mermaid
 flowchart LR
     O[PR opened] --> R[Review PR]
-    R --> P[Findings posted]
+    R --> P["Findings posted<br/>summary + inline threads"]
     P --> F[Developer fixes or explains]
     F --> C[New commit pushed]
     C --> RR["Re-check previous findings<br/>+ review the new changes"]
-    RR --> U["Statuses updated<br/>new findings posted"]
+    RR --> U["Statuses updated<br/>thread replies, new findings posted"]
     U -->|more to fix| F
     U -->|all resolved| H[Human review + merge]
 ```
@@ -99,9 +99,9 @@ flowchart LR
     dev([Developer]) -->|"① opens PR / pushes<br/>(comments are read on the next push)"| GH[("GitHub<br/>repo · PR · comments")]
     GH -->|"② pull_request event"| GA["GitHub Actions<br/>fresh runner per run"]
     GA -->|"③ python -m orchestrator.main"| ORCH["Python orchestrator<br/>orchestrator/main.py · run_review"]
-    ORCH <-->|"④ REST reads: PR, files,<br/>compares, comments"| GH
+    ORCH <-->|"④ REST + GraphQL reads: PR, files,<br/>compares, comments, review threads"| GH
     ORCH <-->|"⑤ structured-output calls"| LLM[("LLM provider<br/>Gemini · OpenAI · Claude")]
-    ORCH -->|"⑥ post review comment<br/>(+ hidden state)"| GH
+    ORCH -->|"⑥ post review comment (+ hidden state),<br/>inline threads, thread replies"| GH
     human([Human reviewer]) -->|approves, merges| GH
 
     classDef ext fill:#e8f0fe,stroke:#4a74c9,color:#1a3a7a
@@ -188,7 +188,7 @@ flowchart TB
     end
 
     GHC["clients/github.py<br/>the only GitHub access"]
-    GHAPI[("GitHub REST API")]
+    GHAPI[("GitHub REST + GraphQL API")]
     PROV[("LLM provider")]
 
     WF --> MAIN
@@ -202,7 +202,7 @@ flowchart TB
     EXP -->|"one call per<br/>explained finding"| STR
     REV & STR --> LLMF
     LLMF --> PROV
-    ORCH -->|"all reads + the post"| GHC
+    ORCH -->|"all reads + all writes"| GHC
     GHC --> GHAPI
 
     classDef llm fill:#fff4d6,stroke:#c99a1d,color:#5a4300
@@ -576,6 +576,7 @@ Steps 4a and 4b run **before** the reviewer so it is shown current statuses and 
 | `GithubException` (API failure) | Exit 1, nothing posted |
 | `FindingParseError` (reviewer output unparseable twice) | Exit 1, nothing posted |
 | `StateTooLargeError` (state block over the cap) | Exit 1, nothing posted |
+| Network error reaching GitHub after PyGithub's retries (e.g. repeated 503s: `requests.exceptions.RetryError`) | Exit 1, nothing posted — but **uncaught**: a traceback instead of a `[failed]` line (seen live on PR #10; re-running the job fixed it) |
 | LLM provider error in any agent (rate limit, timeout, outage) | Exit 1, nothing posted — but **uncaught**: a traceback instead of a `[failed]` line, and one failing re-check call aborts the whole run (section 12) |
 | Re-check or judge reply unparseable twice | Not fatal: that finding keeps its status |
 | Head file unreadable (directory, over 1 MB) | Not fatal: that finding keeps its status |
@@ -692,7 +693,7 @@ A developer replies on the PR, e.g. `F003: false positive — the caller already
 ```mermaid
 flowchart TD
     A{"main.py · _apply_developer_explanations<br/>any finding open / reopened?"} -->|no| SKIP["comments not read"]
-    A -->|yes| C["clients/github.py · get_pr_comments"]
+    A -->|yes| C["clients/github.py · get_pr_comments<br/>+ thread_replies (from step 3b)"]
 
     subgraph DR ["developer_replies"]
         CUT["keep comments after the bot's<br/>last valid state comment"] --> TR{"PR author, or<br/>OWNER / MEMBER / COLLABORATOR?"}
@@ -783,6 +784,7 @@ Baseline: the agent can **read** and **comment**; it cannot approve, merge, or m
 ### 9.2 Reliability
 
 - **Idempotent re-runs.** A re-run at the same commit is noop; a run cancelled mid-way saved nothing (saving is posting).
+- **Thread actions converge.** They are planned from the saved state and the bot's own last reply in each thread, so a failed post or reply is redone by the next run and a status change is announced exactly once (verified live on PR #10). Unreadable threads skip thread actions rather than risk duplicates.
 - **Graceful degradation, partial.** An unparseable answer or unreadable file keeps that finding's status. A provider error is not yet contained per finding and fails the whole run (section 7).
 - **State recovery.** A corrupt or forged newest block falls back to an older valid one.
 
@@ -914,7 +916,8 @@ flowchart TD
     START((start)) --> LM["load_memory<br/>step 2"]
     LM --> BD["build_diff<br/>step 3"]
     BD -->|noop| END1((end))
-    BD --> RC["recheck + explain<br/>steps 4a–4b"]
+    BD --> TH["read_threads<br/>step 3b"]
+    TH --> RC["recheck + explain<br/>steps 4a–4b"]
     RC --> FAN{{"fan-out"}}
     FAN --> LR["logic<br/>step 5"] & SR["security"] & TR["testing"]
     LR & SR & TR <-.-> TOOLS["tools<br/>MAX_TOOL_CALLS"]
@@ -924,7 +927,8 @@ flowchart TD
     CR --> JD["judge<br/>confidence policy"]
     JD --> UM["update_memory<br/>step 6"]
     UM --> PO["post_review<br/>step 7"]
-    PO --> END2((end))
+    PO --> SY["sync_threads<br/>step 8"]
+    SY --> END2((end))
 
     classDef llm fill:#fff4d6,stroke:#c99a1d,color:#5a4300
     classDef planned stroke-dasharray: 5 5,fill:#f4f4f4,stroke:#999,color:#666
@@ -970,6 +974,7 @@ Read-only plain functions in `tools/`, bound to reviewers through the factory; M
 
 | Limitation | Impact / mitigation |
 |---|---|
+| Network errors to GitHub are not in `main()`'s handled errors | A GitHub outage (503s) ends the run with a traceback instead of a `[failed]` line; nothing is posted, so a re-run is safe. Fix: add `requests.exceptions.RequestException` to the handled errors |
 | LLM provider errors are not caught per finding | One rate-limited re-check or judge call aborts the whole run, with a traceback instead of a `[failed]` line. Fix: catch provider errors in `ask_structured` (keep the status) and add them to `main()`'s handled errors |
 | A reply posted during a run is never judged | Comments are read before the reviewer call; a reply landing before the post falls behind the new cutoff. Fix: store the newest comment id read in the state and use it as the next cutoff |
 | Rolling back the code can lose state | Older code rejects blocks with newer fields and falls back to an earlier block, whose lower `next_id` can reuse IDs already shown. Avoid rollbacks across schema changes, or bump `schema_version` |
