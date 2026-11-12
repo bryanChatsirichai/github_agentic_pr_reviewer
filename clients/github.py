@@ -52,15 +52,16 @@ __all__ = [
 #: Review threads and their comments read per run. PyGithub has no review-
 #: thread API (threads and their resolved flag exist only in GraphQL).
 _REVIEW_THREADS_QUERY = """
-query($owner: String!, $name: String!, $number: Int!) {
+query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) {
-        pageInfo { hasNextPage }
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           isResolved
           comments(first: 100) {
+            pageInfo { hasNextPage }
             nodes {
               databaseId
               body
@@ -353,34 +354,46 @@ def get_review_threads(
     repo: Repository | None = None,
     client: Github | None = None,
 ) -> list[dict[str, Any]]:
-    """Return PR ``pr_number``'s inline review threads (the first 100).
+    """Return every inline review thread on PR ``pr_number``.
 
     Each entry is ``{"id": GraphQL node id (for ``set_thread_resolved``),
     "is_resolved": bool, "comments": [...]}``, comments oldest first and
     shaped like ``get_pr_comments`` entries, so both can feed the same
     explanation cutoff. A comment's ``id`` is its REST review-comment id
     (for ``reply_to_review_comment``) — a separate id space from issue
-    comments. More than 100 threads logs a warning and the rest are not read.
+    comments.
+
+    Threads are read page by page (100 per GraphQL call) until the last:
+    a thread left out would look like "no thread yet" and the finding
+    would get a duplicate inline comment. Comments are read up to 100 per
+    thread — only replies past that are missed, logged as a warning.
     """
     repo = repo or _get_repo(client)
-    _, data = repo.requester.graphql_query(
-        _REVIEW_THREADS_QUERY,
-        {"owner": repo.owner.login, "name": repo.name, "number": pr_number},
-    )
-    threads = data["data"]["repository"]["pullRequest"]["reviewThreads"]
-    if threads["pageInfo"]["hasNextPage"]:
-        logger.warning(
-            "PR #%s has more than 100 review threads; only the first 100 are read",
-            pr_number,
+    threads: list[dict[str, Any]] = []
+    cursor = None
+    while True:
+        _, data = repo.requester.graphql_query(
+            _REVIEW_THREADS_QUERY,
+            {"owner": repo.owner.login, "name": repo.name, "number": pr_number,
+             "cursor": cursor},
         )
-    return [
-        {
-            "id": node["id"],
-            "is_resolved": node["isResolved"],
-            "comments": [_thread_comment(c) for c in node["comments"]["nodes"]],
-        }
-        for node in threads["nodes"]
-    ]
+        page = data["data"]["repository"]["pullRequest"]["reviewThreads"]
+        for node in page["nodes"]:
+            if node["comments"]["pageInfo"]["hasNextPage"]:
+                logger.warning(
+                    "Review thread %s has over 100 comments; only the first 100 comments are read",
+                    node["id"],
+                )
+            threads.append(
+                {
+                    "id": node["id"],
+                    "is_resolved": node["isResolved"],
+                    "comments": [_thread_comment(c) for c in node["comments"]["nodes"]],
+                }
+            )
+        if not page["pageInfo"]["hasNextPage"]:
+            return threads
+        cursor = page["pageInfo"]["endCursor"]
 
 
 def post_inline_comments(
