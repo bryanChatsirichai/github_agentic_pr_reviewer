@@ -229,7 +229,7 @@ def _thread_body(finding: StoredFinding) -> str:
             finding.description,
             "",
             "_If this is intentional, reply here explaining why; an accepted "
-            "explanation dismisses the finding on the next push._",
+            "explanation dismisses the finding on the bot's next review._",
         ]
     )
 

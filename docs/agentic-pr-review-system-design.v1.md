@@ -96,7 +96,7 @@ Task lists and verification records per step: [`implementation-roadmap.md`](impl
 
 ```mermaid
 flowchart LR
-    dev([Developer]) -->|"① opens PR / pushes<br/>(comments are read on the next push)"| GH[("GitHub<br/>repo · PR · comments")]
+    dev([Developer]) -->|"① opens PR / pushes<br/>(comments are read on the next review)"| GH[("GitHub<br/>repo · PR · comments")]
     GH -->|"② pull_request event"| GA["GitHub Actions<br/>fresh runner per run"]
     GA -->|"③ python -m orchestrator.main"| ORCH["Python orchestrator<br/>orchestrator/main.py · run_review"]
     ORCH <-->|"④ REST + GraphQL reads: PR, files,<br/>compares, comments, review threads"| GH
@@ -686,7 +686,7 @@ flowchart TD
 
 ### 8.3 Developer explanations (`orchestrator/explanations.py`)
 
-A developer replies on the PR, e.g. `F003: false positive — the caller already checks this`. On the next push, step 4b runs; each subgraph is one function.
+A developer replies on the PR, e.g. `F003: false positive — the caller already checks this`. On the next run with new code, step 4b runs; each subgraph is one function.
 
 **From Step 9b:** a developer can also reply "this is intentional because…" directly in the finding's inline thread, without the `F003:` prefix. The same rules apply: only the PR author or collaborators count, and the same judge decides (section 11.2).
 
@@ -980,11 +980,11 @@ Read-only plain functions in `tools/`, bound to reviewers through the factory; M
 | Rolling back the code can lose state | Older code rejects blocks with newer fields and falls back to an earlier block, whose lower `next_id` can reuse IDs already shown. Avoid rollbacks across schema changes, or bump `schema_version` |
 | Explanation judge sees only the code around the finding | A plausible but false claim about another file can be accepted. Only trusted people can dismiss, and every dismissal shows who and why; Step 11 tools will let the judge check |
 | One re-check call per finding | Several findings in one edited file cost several calls; batch per file if cost matters |
-| "Re-run job" does not retry a failed thread action | A same-commit re-run is noop and touches no threads; the failed post or reply is redone on the next push. The summary comment lists every finding meanwhile |
+| "Re-run job" does not retry a failed thread action | A same-commit re-run is noop and touches no threads; the failed post or reply is redone by the next run with new code (a push touching only files outside the PR is noop too). The summary comment lists every finding meanwhile |
 | Threads are not resolved automatically | `GITHUB_TOKEN` is refused `resolveReviewThread`; the bot replies and the developer resolves. Fix if wanted: a GitHub App token for the resolve only (section 11.2) |
 | Inline comments show the stored description | Cut at 300 chars with `…`; the summary comment has the full text |
 | Outdated threads stay where they were | A finding whose code moved keeps its thread on the old line; not re-posted |
-| Replies are read on the next push | No `issue_comment` trigger yet |
+| Replies are read on the next run with new code | No `issue_comment` trigger yet |
 | PR comments listed up to three times per run | Cheap; could be merged |
 | Dismissals saved before 2026-11-01 | Show the label without the "explained by" line |
 | Dedupe misses heavy rewordings at a moved line | A duplicate may be filed; Step 14's merge revisits dedupe |

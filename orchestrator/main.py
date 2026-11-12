@@ -286,7 +286,7 @@ def run_review(pr_number: int) -> ReviewResult | None:
     Neither the re-check agent nor the judge runs alone: whenever there is
     new code, the reviewer looks at it for new issues, since a fix can
     introduce one. A reply alone does not start a run (only PR events do),
-    so an explanation is read on the next push.
+    so an explanation is read on the next run with new code.
 
     Raises whatever the config, GitHub and LLM layers raise; ``main``
     turns those into exit 1. Nothing is posted on failure, so the state
@@ -440,7 +440,7 @@ def _sync_threads(
         try:
             reply_to_review_comment(pr_number, update.comment_id, update.reply)
         except GithubException as exc:
-            flow.warning("[threads] %s reply not posted, retried on the next push — %s", update.finding_id, exc)
+            flow.warning("[threads] %s reply not posted, retried by the next run with new code — %s", update.finding_id, exc)
             continue
         # Best effort, not retried: the reply already records the status,
         # and GITHUB_TOKEN without contents: write may not (un)resolve.
