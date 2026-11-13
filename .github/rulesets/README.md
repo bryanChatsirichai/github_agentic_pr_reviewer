@@ -18,7 +18,7 @@ merge, or rewrite history.
 | `pull_request` rule | see below | All changes to `main` must go through a PR |
 | ↳ `dismiss_stale_reviews_on_push` | `true` | New pushes invalidate old approvals |
 | ↳ `required_approving_review_count` | `0` | No approvals required (solo repo) |
-| ↳ `require_conversation_resolution` | `true` | All PR conversations must be resolved before merge |
+| ↳ `required_review_thread_resolution` | `false` | Unresolved PR conversations don't block a merge |
 | `bypass_actors` | user 89973472 | `bryanChatsirichai` (owner) may bypass everything — direct pushes, force pushes, deletion — in emergencies |
 
 Note: "only the owner can commit/merge/delete" is already guaranteed by repo
