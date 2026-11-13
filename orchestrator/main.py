@@ -8,12 +8,14 @@ step  what                         log tags
 ====  ===========================  =====================================
 1     load memory                  ``[memory]``
 2     build PR context, pick diff  ``[route]``, ``[exit]`` on noop
+2b    read inline review threads   ``[threads]``
 3a    re-check previous findings   ``[skip-check]`` ``[recheck]`` ``[status]``
 3b    developer explanations       ``[explain]`` ``[status]``
 4     logic reviewer               ``[review]``
 5     drop duplicates              ``[dedupe]``
 6     file new findings            ``[file]``
 7     post comment + state block   ``[post]``, ``[exit]``
+8     sync inline threads          ``[threads]``
 ====  ===========================  =====================================
 
 Every LLM agent built or skipped logs an ``[agent]`` line, and every
@@ -25,6 +27,7 @@ status change a ``[status]`` line. ``main`` adds ``[start]``,
 import argparse
 import logging
 import os
+import re
 
 from dotenv import load_dotenv
 from github import GithubException
@@ -37,11 +40,15 @@ from clients.github import (
     get_file_content,
     get_merge_base_sha,
     get_pr_comments,
+    get_review_threads,
+    post_inline_comments,
+    reply_to_review_comment,
+    set_thread_resolved,
     verify_connection,
 )
 from models.finding import FindingStatus
 from models.pr_context import PRContext
-from models.review_result import ReviewResult
+from models.review_result import ReviewResult, derived_rating, worst_rating
 from models.review_state import ReviewState
 from models.stored_finding import KNOWN_ISSUE_STATUSES, StoredFinding
 from orchestrator.context_builder import build_context
@@ -65,6 +72,12 @@ from orchestrator.recheck import (
     build_rechecker,
     recheck_findings,
     skip_unchanged,
+)
+from orchestrator.threads import (
+    commentable_lines,
+    plan_thread_actions,
+    thread_replies,
+    threads_by_finding,
 )
 
 load_dotenv()
@@ -125,10 +138,14 @@ def render_comment(context: PRContext, result: ReviewResult) -> str:
     claimed while one is open. Without them, only the new findings.
     """
     files = context.summary.file_list
+    # The reviewer rates only this run's new findings; an earlier finding
+    # that is still open must not be hidden behind an "approve".
+    still_open = [f for f in context.previous_findings if f.status in EXPLAINABLE_STATUSES]
+    overall = worst_rating(result.overall_rating, derived_rating(still_open))
     lines = [
         "## Review Findings",
         "",
-        f"**Overall: {result.overall_rating}** · "
+        f"**Overall: {overall}** · "
         f"branch `{context.head_branch}` @ `{context.head_sha[:10]}` · "
         f"{len(files)} file(s) checked",
         "",
@@ -194,7 +211,7 @@ def _previous_line(finding: StoredFinding) -> str:
         # Backticks, not @: a mention would notify them on every review.
         # Backticks are stripped from the login so it cannot end the span.
         who = ", ".join(f"`{login.replace('`', '')}`" for login in finding.explained_by)
-        why = _one_line(finding.rejection_reason) or "no reason recorded"
+        why = _escape_markdown(_one_line(finding.rejection_reason)) or "no reason recorded"
         line += f"\n  - explained by {who}: {why}"
     return line
 
@@ -221,6 +238,19 @@ _STATUS_LABELS: dict[FindingStatus, tuple[str, str]] = {
 def _one_line(text: str) -> str:
     """Collapse all whitespace, newlines included, to single spaces."""
     return " ".join(text.split())
+
+
+#: Characters that start Markdown or HTML syntax in a GitHub comment.
+_MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()<>#+!|~])")
+
+
+def _escape_markdown(text: str) -> str:
+    """Backslash-escape Markdown and HTML syntax so ``text`` renders literally.
+
+    For text that came from a developer's reply via the judge: it must not
+    add links, images, HTML or formatting to the bot's comment.
+    """
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", text)
 
 
 def _files_section(files: list[str], inline_limit: int = 10) -> str:
@@ -256,7 +286,7 @@ def run_review(pr_number: int) -> ReviewResult | None:
     Neither the re-check agent nor the judge runs alone: whenever there is
     new code, the reviewer looks at it for new issues, since a fix can
     introduce one. A reply alone does not start a run (only PR events do),
-    so an explanation is read on the next push.
+    so an explanation is read on the next run with new code.
 
     Raises whatever the config, GitHub and LLM layers raise; ``main``
     turns those into exit 1. Nothing is posted on failure, so the state
@@ -286,6 +316,10 @@ def run_review(pr_number: int) -> ReviewResult | None:
 
     head_files = _HeadFiles(context.head_sha)
 
+    # 2b. Threads: read before the explanations, since a reply in a
+    #     finding's thread counts as one. None when they could not be read.
+    threads = _read_threads(pr_number)
+
     # 3. Previous findings are brought up to date before the reviewer runs,
     #    so it sees their current statuses and file names and does not
     #    repeat them.
@@ -294,7 +328,9 @@ def run_review(pr_number: int) -> ReviewResult | None:
     state, context = _recheck_previous(state, context, head_files)
     # 3b. Explanations: was it wrong in the first place (rejected)? After
     #     3a, so a finding that was just resolved is not judged.
-    state, context = _apply_developer_explanations(pr_number, state, context, head_files)
+    state, context = _apply_developer_explanations(
+        pr_number, state, context, head_files, thread_replies(threads or {}, resolve_bot_login())
+    )
 
     # 4. Review: the reviewer agent looks at the diff for new issues.
     reviewer_name = "logic-reviewer"
@@ -351,7 +387,77 @@ def run_review(pr_number: int) -> ReviewResult | None:
         len(filed),
         len(state.findings),
     )
+
+    # 8. Threads: after the post, so they follow the state that was saved.
+    #    A failure here is only a warning — the review itself is out.
+    _sync_threads(pr_number, state, context, threads)
     return result
+
+
+def _read_threads(pr_number: int) -> dict[str, dict] | None:
+    """The bot's review threads by finding id, or None if they could not be read.
+
+    None is not the same as "no threads": treating a failed read as empty
+    would post a duplicate inline comment for every open finding.
+    """
+    try:
+        threads = threads_by_finding(get_review_threads(pr_number), resolve_bot_login())
+    except GithubException as exc:
+        flow.warning("[threads] could not read review threads, skipping them — %s", exc)
+        return None
+    flow.info("[threads] %d finding thread(s) on the PR", len(threads))
+    return threads
+
+
+def _sync_threads(
+    pr_number: int,
+    state: ReviewState,
+    context: PRContext,
+    threads: dict[str, dict] | None,
+) -> None:
+    """Bring the inline threads in line with the saved state; never raises
+    on a GitHub error. A failed post or reply is planned again by the next
+    run with new code; a noop run returns before reading threads."""
+    if threads is None:
+        return
+    plan = plan_thread_actions(
+        state.findings, threads, commentable_lines(context.changed_files), context.head_sha
+    )
+    if plan.new_threads:
+        try:
+            post_inline_comments(
+                pr_number,
+                context.head_sha,
+                "🤖 AI Review: findings on their lines. The summary comment lists all of them.",
+                [t.as_review_comment() for t in plan.new_threads],
+            )
+            flow.info(
+                "[threads] posted %s", ", ".join(t.finding_id for t in plan.new_threads)
+            )
+        except GithubException as exc:
+            flow.warning("[threads] inline comments not posted — %s", exc)
+    for update in plan.updates:
+        try:
+            reply_to_review_comment(pr_number, update.comment_id, update.reply)
+        except GithubException as exc:
+            flow.warning("[threads] %s reply not posted, retried by the next run with new code — %s", update.finding_id, exc)
+            continue
+        # Best effort, not retried: the reply already records the status,
+        # and GITHUB_TOKEN without contents: write may not (un)resolve.
+        action = "resolved" if update.resolve else "unresolved"
+        try:
+            set_thread_resolved(update.thread_id, update.resolve)
+            flow.info("[threads] %s replied and %s", update.finding_id, action)
+        except GithubException as exc:
+            flow.warning(
+                "[threads] %s replied, but the thread could not be %s "
+                "(do it by hand) — %s",
+                update.finding_id,
+                action,
+                exc,
+            )
+    if not plan.new_threads and not plan.updates:
+        flow.info("[threads] threads already match the state — nothing to do")
 
 
 class _HeadFiles:
@@ -409,6 +515,9 @@ def _recheck_previous(
         len(skipped.to_recheck),
         ", ".join(f.id for f in skipped.to_recheck),
     )
+    # One LLM call per finding, not per file: a changed file holding three
+    # findings costs three calls (each retried once on unparseable output).
+    # The file text is fetched once and shared.
     outcomes = recheck_findings(skipped.to_recheck, texts, context, recheck_agent)
     flow.info(
         "[agent] recheck_agent done — %d answered, %d unanswered (status kept)",
@@ -421,10 +530,17 @@ def _recheck_previous(
 
 
 def _apply_developer_explanations(
-    pr_number: int, state: ReviewState, context: PRContext, head_files: _HeadFiles
+    pr_number: int,
+    state: ReviewState,
+    context: PRContext,
+    head_files: _HeadFiles,
+    in_thread_replies: list[dict],
 ) -> tuple[ReviewState, PRContext]:
-    """Dismiss findings a developer explained in a PR comment, if the judge agrees.
+    """Dismiss findings a developer explained, if the judge agrees.
 
+    An explanation is a PR comment naming the finding (``F003: …``) or a
+    reply in the finding's inline thread (``in_thread_replies``, from
+    ``thread_replies``). Both go through the same cutoff and trust rule.
     Returns the state and context with the updated findings. Comments are
     only fetched when some finding could be dismissed (``open`` or
     ``reopened``). See ``orchestrator/explanations.py`` for whose replies
@@ -434,8 +550,12 @@ def _apply_developer_explanations(
         flow.info("[explain] no open finding to explain — comments not read")
         return state, context
 
+    # Oldest first, as developer_replies expects, with both sources mixed.
+    comments = sorted(
+        get_pr_comments(pr_number) + in_thread_replies, key=lambda c: c["created_at"]
+    )
     replies = developer_replies(
-        get_pr_comments(pr_number),
+        comments,
         pr_author=context.author,
         bot_login=resolve_bot_login(),
     )
@@ -517,7 +637,10 @@ def main(argv: list[str] | None = None) -> int:
             response = chat_model.invoke("Testing what model is being used")
             logger.info("LLM replied: %.200s", response.content)
             logger.debug("Full LLM response: %r", response)
-            flow.info("[done] exit 0 — manual dispatch OK, no review")
+            flow.info(
+                "[done] exit 0 — manual dispatch OK, no review, %d LLM call(s)",
+                llm.llm_call_count(),
+            )
             return 0
         result = run_review(args.pr)
     except (
@@ -535,15 +658,17 @@ def main(argv: list[str] | None = None) -> int:
         # Traceback only at DEBUG: the message names the cause; the stack
         # is for digging into it.
         flow.error(
-            "[failed] exit 1, nothing posted — %s: %s",
+            "[failed] exit 1, nothing posted, %d LLM call(s) — %s: %s",
+            llm.llm_call_count(),
             type(exc).__name__,
             exc,
             exc_info=logger.isEnabledFor(logging.DEBUG),
         )
         return 1
     flow.info(
-        "[done] exit 0 — %s",
+        "[done] exit 0 — %s, %d LLM call(s)",
         "skipped, nothing new" if result is None else "review posted",
+        llm.llm_call_count(),
     )
     return 0
 

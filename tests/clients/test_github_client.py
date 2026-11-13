@@ -23,7 +23,11 @@ from clients.github import (
     get_pr_diff,
     get_pr_files,
     get_pull_request,
+    get_review_threads,
+    post_inline_comments,
     post_review_comment,
+    reply_to_review_comment,
+    set_thread_resolved,
     verify_connection,
 )
 from tests.helpers import GoneComparison, load_pr_fixture, make_fake_pr, make_repo
@@ -285,3 +289,147 @@ def test_post_review_comment_keeps_existing_marker(pr, body) -> None:
     post_review_comment(42, body, repo=make_repo(pr))
 
     pr.create_issue_comment.assert_called_once_with(body)
+
+
+# --- review threads (Step 9b) ----------------------------------------------
+
+
+def _thread_node(
+    thread_id: str, resolved: bool, comments: list[dict], more_comments: bool = False
+) -> dict:
+    return {"id": thread_id, "isResolved": resolved, "comments": {
+        "nodes": comments, "pageInfo": {"hasNextPage": more_comments},
+    }}
+
+
+def _threads_page(threads: list[dict], next_cursor: str | None = None) -> tuple:
+    """One GraphQL answer: a page of threads, and the cursor of the next page."""
+    return (
+        {},
+        {"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": threads,
+            "pageInfo": {"hasNextPage": next_cursor is not None, "endCursor": next_cursor},
+        }}}}},
+    )
+
+
+def _graphql_repo(*pages: tuple) -> MagicMock:
+    """A repo whose requester answers the review-threads query with ``pages``."""
+    repo = MagicMock()
+    repo.owner.login = "octo"
+    repo.name = "widgets"
+    repo.requester.graphql_query.side_effect = list(pages)
+    return repo
+
+
+def test_get_review_threads_queries_the_pr_by_owner_name_and_number() -> None:
+    repo = _graphql_repo(_threads_page([]))
+
+    assert get_review_threads(42, repo=repo) == []
+
+    _, variables = repo.requester.graphql_query.call_args.args
+    assert variables == {"owner": "octo", "name": "widgets", "number": 42, "cursor": None}
+
+
+def test_get_review_threads_normalises_comments_to_match_get_pr_comments() -> None:
+    bot_comment = {
+        "databaseId": 101, "body": "<!-- ai-review-finding:F001 --> issue",
+        "createdAt": "2026-11-01T10:00:00Z", "authorAssociation": "NONE",
+        # GraphQL names a GitHub App by its slug, without REST's "[bot]".
+        "author": {"__typename": "Bot", "login": "github-actions"},
+    }
+    human_reply = {
+        "databaseId": 102, "body": None,
+        "createdAt": "2026-11-01T11:30:00Z", "authorAssociation": "OWNER",
+        "author": {"__typename": "User", "login": "alice"},
+    }
+    ghost_reply = {
+        "databaseId": 103, "body": "deleted account",
+        "createdAt": "2026-11-01T12:00:00Z", "authorAssociation": "NONE",
+        "author": None,
+    }
+    repo = _graphql_repo(
+        _threads_page([_thread_node("PRRT_1", False, [bot_comment, human_reply, ghost_reply])])
+    )
+
+    [thread] = get_review_threads(42, repo=repo)
+
+    at = lambda h, m: datetime(2026, 11, 1, h, m, tzinfo=timezone.utc).isoformat()
+    assert thread == {
+        "id": "PRRT_1",
+        "is_resolved": False,
+        "comments": [
+            {"id": 101, "body": "<!-- ai-review-finding:F001 --> issue",
+             "created_at": at(10, 0), "author": "github-actions[bot]",
+             "author_association": "NONE"},
+            {"id": 102, "body": "", "created_at": at(11, 30),
+             "author": "alice", "author_association": "OWNER"},
+            {"id": 103, "body": "deleted account", "created_at": at(12, 0),
+             "author": None, "author_association": "NONE"},
+        ],
+    }
+
+
+def test_get_review_threads_reads_every_page() -> None:
+    # A thread missing from the result looks like "no thread yet" and gets
+    # a duplicate inline comment, so a truncated list is not acceptable.
+    repo = _graphql_repo(
+        _threads_page([_thread_node("PRRT_1", True, [])], next_cursor="c1"),
+        _threads_page([_thread_node("PRRT_2", False, [])]),
+    )
+
+    threads = get_review_threads(42, repo=repo)
+
+    assert [t["id"] for t in threads] == ["PRRT_1", "PRRT_2"]
+    cursors = [c.args[1]["cursor"] for c in repo.requester.graphql_query.call_args_list]
+    assert cursors == [None, "c1"]
+
+
+def test_get_review_threads_warns_when_a_thread_has_over_100_comments(caplog) -> None:
+    repo = _graphql_repo(_threads_page([_thread_node("PRRT_1", False, [], more_comments=True)]))
+
+    with caplog.at_level("WARNING", logger="pr-reviewer.github"):
+        get_review_threads(42, repo=repo)
+
+    assert "PRRT_1" in caplog.text and "first 100 comments" in caplog.text
+
+
+def test_post_inline_comments_posts_one_comment_review_at_the_head(pr) -> None:
+    head_commit = SimpleNamespace(sha="headdef456")
+    repo = make_repo(pr)
+    repo.get_commit.return_value = head_commit
+    pr.create_review = MagicMock(return_value=SimpleNamespace(id=555))
+    comments = [{"path": "src/cli.py", "line": 12, "side": "RIGHT", "body": "F001"}]
+
+    review_id = post_inline_comments(42, "headdef456", "AI review", comments, repo=repo)
+
+    repo.get_commit.assert_called_once_with("headdef456")
+    pr.create_review.assert_called_once_with(
+        commit=head_commit, body="AI review", event="COMMENT", comments=comments
+    )
+    assert review_id == 555
+
+
+def test_reply_to_review_comment_replies_in_the_thread(pr) -> None:
+    pr.create_review_comment_reply = MagicMock(return_value=SimpleNamespace(id=888))
+
+    reply_id = reply_to_review_comment(42, 101, "✅ Fixed", repo=make_repo(pr))
+
+    pr.create_review_comment_reply.assert_called_once_with(101, "✅ Fixed")
+    assert reply_id == 888
+
+
+@pytest.mark.parametrize(
+    ("resolved", "mutation"),
+    [(True, "resolveReviewThread"), (False, "unresolveReviewThread")],
+)
+def test_set_thread_resolved_sends_the_matching_mutation(resolved, mutation) -> None:
+    repo = MagicMock()
+    repo.requester.graphql_named_mutation.return_value = (
+        {}, {"thread": {"isResolved": resolved}},
+    )
+
+    assert set_thread_resolved("PRRT_1", resolved, repo=repo) is resolved
+
+    name, mutation_input, _ = repo.requester.graphql_named_mutation.call_args.args
+    assert (name, mutation_input) == (mutation, {"threadId": "PRRT_1"})

@@ -14,12 +14,13 @@ import orchestrator.main as main_module
 from agents.reviewer_agents.parser import FindingParseError
 from models.context_summary import ContextSummary
 from models.explanation_verdict import ExplanationVerdict
-from models.finding import FindingStatus
+from models.finding import FindingStatus, Severity
 from models.recheck_verdict import RecheckVerdict
 from models.review_result import ReviewResult
 from models.review_state import ReviewState
 from orchestrator.main import main, parse_args, render_comment
 from orchestrator.memory import StateTooLargeError, parse_state_block
+from orchestrator.threads import finding_marker
 from tests.helpers import (
     make_context,
     make_finding,
@@ -67,6 +68,20 @@ def stub_review(monkeypatch):
         "post_review_comment",
         lambda pr, body, **kwargs: posted.update(pr=pr, body=body),
     )
+    # Thread calls, recorded in order. "summary_posted" shows whether the
+    # summary (the state save) had already gone out when the call was made.
+    posted["thread_calls"] = []
+
+    def record(name, result=None):
+        def call(*args):
+            posted["thread_calls"].append((name, args, "body" in posted))
+            return result
+        return call
+
+    monkeypatch.setattr(main_module, "get_review_threads", lambda pr: [])
+    monkeypatch.setattr(main_module, "post_inline_comments", record("post", 1))
+    monkeypatch.setattr(main_module, "reply_to_review_comment", record("reply", 2))
+    monkeypatch.setattr(main_module, "set_thread_resolved", record("resolve", True))
     return posted
 
 
@@ -607,8 +622,8 @@ def test_render_comment_says_who_dismissed_a_finding_and_why() -> None:
     )
 
     # Logins in code spans (no @ notification, no backtick break-out);
-    # the reason collapsed so it cannot start a heading.
-    assert "  - explained by `alice`, `bob`: Caller ## checks it" in body
+    # the reason collapsed to one line and escaped so it cannot start a heading.
+    assert r"  - explained by `alice`, `bob`: Caller \#\# checks it" in body
 
 
 def test_render_comment_handles_a_dismissal_saved_without_who_or_why() -> None:
@@ -642,3 +657,233 @@ def test_main_exits_1_when_the_state_block_is_too_large(monkeypatch, stub_review
     monkeypatch.setattr(github_client, "post_review_comment", must_not_post)
 
     assert main(["--pr", "42", "--event", "opened"]) == 1
+
+
+# --- inline review threads (Step 9b) ---------------------------------------
+
+#: F001 sits on src/cli.py line 12, inside this hunk (new-side lines 10–14).
+CLI_IN_DIFF = {"filename": "src/cli.py", "sha": "blob-new", "status": "modified",
+               "patch": "@@ -10,5 +10,5 @@\n a\n b\n-c\n+C\n d\n e\n"}
+
+
+def _bot_thread(finding_id: str, *, resolved: bool, replies=()) -> dict:
+    first = {"id": 501, "body": finding_marker(finding_id), "author": "github-actions[bot]",
+             "created_at": "2026-11-01T09:00:00+00:00", "author_association": "NONE"}
+    return {"id": f"T-{finding_id}", "is_resolved": resolved,
+            "comments": [first, *replies]}
+
+
+def test_main_posts_an_inline_thread_after_the_summary(monkeypatch, stub_review) -> None:
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=[CLI_IN_DIFF])
+    )
+
+    assert main(["--pr", "42", "--event", "opened"]) == 0
+
+    [(name, (pr, head, _, comments), summary_first)] = stub_review["thread_calls"]
+    assert (name, pr, head, summary_first) == ("post", 42, "headdef456", True)
+    [comment] = comments
+    assert (comment["path"], comment["line"], comment["side"]) == ("src/cli.py", 12, "RIGHT")
+    assert comment["body"].startswith(finding_marker("F001"))
+
+
+def test_main_posts_no_thread_for_a_finding_off_the_diff(stub_review) -> None:
+    # make_context has no changed files, so nothing is commentable.
+    assert main(["--pr", "42", "--event", "opened"]) == 0
+
+    assert "body" in stub_review and stub_review["thread_calls"] == []
+
+
+def test_main_resolves_the_thread_of_a_fixed_finding(monkeypatch, stub_review) -> None:
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: earlier_review())
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=[CLI_IN_DIFF])
+    )
+    monkeypatch.setattr(
+        main_module, "get_review_threads", lambda pr: [_bot_thread("F001", resolved=False)]
+    )
+    monkeypatch.setattr(
+        main_module,
+        "build_rechecker",
+        lambda: SimpleNamespace(
+            recheck=lambda message: RecheckVerdict(issue_present=False, reason="fixed")
+        ),
+    )
+    monkeypatch.setattr(  # nothing new: the only finding is the fixed one
+        main_module,
+        "build_reviewer",
+        lambda name: SimpleNamespace(
+            review=lambda ctx: ReviewResult(overall_rating="approve", findings=[])
+        ),
+    )
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+
+    assert [(n, a) for n, a, _ in stub_review["thread_calls"]] == [
+        ("reply", (42, 501, "✅ Fixed in `headdef456`.")),
+        ("resolve", ("T-F001", True)),
+    ]
+
+
+def test_main_dismisses_a_finding_explained_in_its_thread(monkeypatch, stub_review) -> None:
+    reply = {"id": 502, "body": "argv is checked by the caller",
+             "created_at": "2026-11-01T10:00:00+00:00", "author": "alice",
+             "author_association": "COLLABORATOR"}
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: earlier_review())
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=[CLI_IN_DIFF])
+    )
+    monkeypatch.setattr(
+        main_module,
+        "get_review_threads",
+        lambda pr: [_bot_thread("F001", resolved=False, replies=[reply])],
+    )
+    judged = []
+    monkeypatch.setattr(
+        main_module,
+        "build_explanation_judge",
+        lambda: SimpleNamespace(
+            judge=lambda message: judged.append(message)
+            or ExplanationVerdict(accepted=True, reason="caller checks argv")
+        ),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "build_reviewer",
+        lambda name: SimpleNamespace(
+            review=lambda ctx: ReviewResult(overall_rating="approve", findings=[])
+        ),
+    )
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+
+    assert len(judged) == 1 and "argv is checked by the caller" in judged[0]
+    stored = parse_state_block(stub_review["body"]).findings[0]
+    assert (stored.status, stored.explained_by) == (FindingStatus.REJECTED, ["alice"])
+    assert [n for n, _, _ in stub_review["thread_calls"]] == ["reply", "resolve"]
+
+
+def test_main_skips_thread_actions_when_threads_cannot_be_read(monkeypatch, stub_review) -> None:
+    # An unread thread list must not look like "no threads": that would
+    # post a duplicate inline comment for every open finding.
+    def forbidden(pr):
+        raise GithubException(403, {"message": "Resource not accessible by integration"})
+
+    monkeypatch.setattr(main_module, "get_review_threads", forbidden)
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=[CLI_IN_DIFF])
+    )
+
+    assert main(["--pr", "42", "--event", "opened"]) == 0
+
+    assert "body" in stub_review and stub_review["thread_calls"] == []
+
+
+def test_main_survives_a_failed_thread_action(monkeypatch, stub_review) -> None:
+    def rejected(*args):
+        raise GithubException(422, {"message": "line must be part of the diff"})
+
+    monkeypatch.setattr(main_module, "post_inline_comments", rejected)
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=[CLI_IN_DIFF])
+    )
+
+    assert main(["--pr", "42", "--event", "opened"]) == 0
+    assert "body" in stub_review  # the summary, and so the state, still went out
+
+
+def test_main_does_not_read_threads_on_a_noop(monkeypatch, stub_review) -> None:
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: earlier_review())
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(diff_mode="noop", diff="")
+    )
+
+    def must_not_read(pr):
+        raise AssertionError("a noop run must not read threads")
+
+    monkeypatch.setattr(main_module, "get_review_threads", must_not_read)
+
+    assert main(["--pr", "42", "--event", "synchronize"]) == 0
+
+
+def test_main_keeps_the_reply_when_the_token_cannot_resolve(monkeypatch, stub_review, caplog) -> None:
+    # Live on PR #10: GITHUB_TOKEN may reply but not resolve. The reply
+    # still counts and the run succeeds; the warning says to resolve by hand.
+    monkeypatch.setattr(main_module, "load_memory", lambda pr: earlier_review())
+    monkeypatch.setattr(
+        main_module, "build_context", lambda pr, state: make_context(changed_files=[CLI_IN_DIFF])
+    )
+    monkeypatch.setattr(
+        main_module, "get_review_threads", lambda pr: [_bot_thread("F001", resolved=False)]
+    )
+    monkeypatch.setattr(
+        main_module,
+        "build_rechecker",
+        lambda: SimpleNamespace(
+            recheck=lambda message: RecheckVerdict(issue_present=False, reason="fixed")
+        ),
+    )
+    monkeypatch.setattr(
+        main_module,
+        "build_reviewer",
+        lambda name: SimpleNamespace(
+            review=lambda ctx: ReviewResult(overall_rating="approve", findings=[])
+        ),
+    )
+
+    def forbidden(thread_id, resolved):
+        raise GithubException(400, {"errors": [{"type": "FORBIDDEN"}]})
+
+    monkeypatch.setattr(main_module, "set_thread_resolved", forbidden)
+
+    with caplog.at_level("WARNING", logger="pr-reviewer.flow"):
+        assert main(["--pr", "42", "--event", "synchronize"]) == 0
+
+    assert [n for n, _, _ in stub_review["thread_calls"]] == ["reply"]
+    assert "F001 replied, but the thread could not be resolved" in caplog.text
+
+
+# --- Step 9 task 5: rating and escaping -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("llm_rating", "previous", "shown"),
+    [
+        # A still-open earlier finding outranks a clean new diff.
+        ("approve", [make_stored_finding(severity=Severity.MEDIUM)], "comment"),
+        ("approve", [make_stored_finding(status=FindingStatus.REOPENED,
+                                         severity=Severity.HIGH)], "request_changes"),
+        # Never lowered: the reviewer's own verdict on new findings stands.
+        ("request_changes", [make_stored_finding(severity=Severity.LOW)], "request_changes"),
+        # Fixed or dismissed findings don't count.
+        ("approve", [make_stored_finding(status=FindingStatus.RESOLVED,
+                                         severity=Severity.HIGH),
+                     make_stored_finding(id="F002", status=FindingStatus.REJECTED,
+                                         rejected_by="developer")], "approve"),
+    ],
+    ids=["open-medium", "reopened-high", "never-lowered", "only-closed-ones"],
+)
+def test_render_comment_rates_still_open_previous_findings(llm_rating, previous, shown) -> None:
+    body = render_comment(
+        make_context(previous_findings=previous), ReviewResult(overall_rating=llm_rating)
+    )
+
+    assert f"**Overall: {shown}**" in body
+
+
+def test_render_comment_escapes_markdown_in_the_dismissal_reason() -> None:
+    # The reason is LLM-written from a developer's reply, so it must not be
+    # able to add links, images, HTML or formatting to the bot's comment.
+    dismissed = make_stored_finding(
+        status=FindingStatus.REJECTED, rejected_by="developer", explained_by=["alice"],
+        rejection_reason="See [docs](https://evil.example) **now** <img src=x> `code`",
+    )
+
+    body = render_comment(
+        make_context(previous_findings=[dismissed]), ReviewResult(overall_rating="approve")
+    )
+
+    assert (
+        r"explained by `alice`: See \[docs\]\(https://evil.example\) "
+        r"\*\*now\*\* \<img src=x\> \`code\`"
+    ) in body

@@ -36,8 +36,8 @@ General rules:
 - [x] Step 6 — Finding store (JSON memory)
 - [x] Step 7 — Wire memory into the review flow
 - [x] Step 8 — Incremental diff
-- [ ] Step 9 — Finding re-check pass
-- [ ] Step 9b — Inline review threads
+- [x] Step 9 — Finding re-check pass
+- [x] Step 9b — Inline review threads
 - [ ] Step 10 — LangGraph graph skeleton
 - [ ] Step 11 — Tools layer
 - [ ] Step 12 — Critic (verification loop)
@@ -327,7 +327,7 @@ Bot finding F001 on this PR (an identical head skips the merge-base check) was c
 
 ---
 
-### [ ] Step 9 — Finding re-check pass (the core differentiator)
+### [x] Step 9 — Finding re-check pass (the core differentiator)
 
 **Goal:** Previous findings are explicitly re-checked and their statuses updated — including regression detection.
 
@@ -365,7 +365,7 @@ Every run with new code posts a fresh summary comment, so the latest bot comment
    **Done (2026-11-01):** `orchestrator/explanations.py`, run after the re-check so a finding that was just resolved is not judged. Comments are only fetched when some finding is `open` or `reopened` (the lifecycle table has no `resolved → rejected`). The cutoff is the bot's newest comment with a valid state block — the same rule `load_memory` uses, via the shared `resolve_bot_login`. A separate explanation judge (prompt `explanation-judge.md`) makes one call per explained finding; replies are capped at 2,000 chars and fenced so they cannot pose as prompt sections. An accepted explanation also stores who explained it (`explained_by`) and the judge's reason (`rejection_reason`, ≤ 300 chars) for the comment. A reply alone does not start a run; it is read on the next push.
 5. Comment format from design section 8.4: previous findings with status markers, then new findings. The "Overall" rating must take still-open previous findings into account. Today it rates only the new findings, so a comment can say `approve` next to open medium findings.
 
-   **Partly done (2026-11-01):** markers and plain-English labels are in — 🟡 open, ✅ fixed, 🔁 reopened (came back after a fix), 💬 dismissed (developer explained) with an `explained by` line (login in a code span, not an `@` mention, so nobody is notified on every review). **Still to do:** the "Overall" rating, and escaping Markdown in the shown rejection reason (bot finding F005 on the Step 9 PR).
+   **Done (2026-11-01, completed 2026-11-12):** markers and plain-English labels are in — 🟡 open, ✅ fixed, 🔁 reopened (came back after a fix), 💬 dismissed (developer explained) with an `explained by` line (login in a code span, not an `@` mention, so nobody is notified on every review). On 2026-11-12: "Overall" is the worst of the reviewer's rating and `derived_rating` of the still-open (`open` / `reopened`) previous findings (`worst_rating` in `models/review_result.py`), so it is never lowered and never says `approve` next to an open finding. The judge's reason is backslash-escaped for Markdown and HTML (`_escape_markdown` in `main.py`; bot finding F005 on the Step 9 PR).
 
 **Done when:** Full scenario test on a real PR: commit 1 plants F001 → commit 2 fixes it (F001 → resolved in state + comment) → commit 3 reintroduces it (F001 → reopened). Plus: a collaborator's "F00x: intentional because …" reply leads to `rejected (developer)`; the same reply from a non-collaborator is ignored. This is design section 6.3 proven end-to-end.
 
@@ -376,36 +376,111 @@ Every run with new code posts a fresh summary comment, so the latest bot comment
 - [x] Regression → reopened (2026-11-02): `d7480d9` put F001's bug back (dropped the `file_exists` check). The next review moved F001 `resolved → reopened` (shown `🔁 reopened (came back after a fix)`), and the state block agrees. The revert `e414cc2` moved it `reopened → resolved` again. Seen along the way: "Overall" still said `approve` with F001 reopened (Task 5's open item), and the located line moved to `recheck.py:205`, some 35 lines above the reintroduced check.
 - [x] Non-collaborator reply ignored: accepted on the offline test `test_main_ignores_an_explanation_from_an_outsider`; not tried live (no non-collaborator account to hand).
 
+**Verified (2026-11-12):** `uv run pytest` — 348 passed. Task 5 live on PR #10: at `028d8c9` the reviewer said `approve` but the comment showed **Overall: comment** because F002 was reopened (medium); after the revert `5c666ce` it was `approve` again. Escaping is covered offline (`test_render_comment_escapes_markdown_in_the_dismissal_reason`).
+
 ---
 
-### [ ] Step 9b — Inline review threads
+### [x] Step 9b — Inline review threads
 
-**Goal:** Each finding lives in an inline review thread on its line, and re-check outcomes become thread actions (resolve, stay quiet, reply) instead of only a new summary comment.
+**Goal:** Each open finding also gets an inline review thread on its line. The thread is resolved when the finding is fixed or dismissed, and a reply in the thread counts as a developer explanation. The summary comment stays exactly as it is.
 
-**Why here:** this is the earliest point where inline comments don't create noise. Before Step 9 the bot can't tell resolved from still-open findings, so every push would re-post N inline comments. Placing it before Step 10 means the LangGraph refactor is verified with the final posting behaviour, so posting isn't restructured twice.
+**Why here:** before Step 9 the bot couldn't tell fixed findings from open ones, so every push would re-post every inline comment. Coming before Step 10 means the LangGraph refactor is checked against the final posting behaviour.
 
 **Depends on:** Step 9.
 
-**Creates:** nothing new. Edits to `clients/github.py` (review/thread functions) and the posting path in `main.py`.
+**Design (2026-11-02):**
+- **Threads are added next to the summary comment.** State stays in the summary comment, so `load_memory` and `save_memory` don't change.
+- **Threads are found by marker, not stored.** Each inline comment carries a hidden marker, `<!-- ai-review-finding:F003 -->`, and each run reads the PR's threads with one GraphQL query. `thread_id` stays in the model, always `null`: every saved block contains it, so removing it would make them all fail validation.
+- **Thread actions bring threads in line with the state.** A failed action is retried by the next run with new code (a noop run touches no threads).
+- **No extra LLM calls.**
+
+Rationale: design section 11.2.
+
+**Status (2026-11-12):** done. Tasks 1–7 built and verified on PR #10 (below). The bot can't resolve threads with `GITHUB_TOKEN`, so developers resolve them by hand (Task 6).
+
+**Creates:**
+
+```text
+orchestrator/threads.py            # pure: placement, thread lookup, action plan, thread replies
+tests/orchestrator/test_threads.py
+```
+(Plus edits to `clients/github.py` and `main.py`.)
 
 **Tasks:**
-1. Only posting and thread tracking change; the state block and re-check logic from Steps 6–9 stay as they are.
-2. Post via `pr.create_review(commit, body, event="COMMENT", comments=[{path, line, side, body}])`: the summary + state block goes in the review body, each finding becomes an inline comment. `event="COMMENT"` only — `APPROVE`/`REQUEST_CHANGES` from `github-actions[bot]` is gated by the repo setting "Allow GitHub Actions to create and approve pull requests" (off by default), and humans approve (design section 9.1).
-3. Before posting, check each finding's `file`/`line` against the PR patch hunks. GitHub rejects inline comments on lines outside the diff with a 422 error, and one bad comment fails the whole review. Findings that can't be placed are listed in the summary only.
-4. Store the inline comment id on the finding (`thread_id` in the state block).
-5. Map re-check outcomes to thread actions:
-   - resolved → reply "✅ Resolved in `<sha>`" in the thread (`create_review_comment_reply`), then resolve the thread through GraphQL `resolveReviewThread` (PyGithub has no wrapper);
-   - still open → no new comment;
-   - reopened → reply in the same thread.
-6. Outdated threads: when a later commit moves the line, GitHub marks the thread outdated. A finding that is still open is re-posted at its new line, located via the stored `snippet`.
-7. Developer explanations: thread replies (`get_review_comments()`, linked through `in_reply_to_id`) are tied to their finding directly, replacing the `F00x:` convention from Step 9. The same author-association filter applies.
-8. Load state from the review body (it carries the state block now) as well as from issue comments, so PRs reviewed before this step keep their state.
+1. **Client functions** (`clients/github.py`):
+   - `get_review_threads(pr_number)`: GraphQL through `requester.graphql_query`. Normalise the author login and `created_at` to match `get_pr_comments`, because the explanations cutoff compares timestamps as strings.
+   - `post_inline_comments(pr_number, head_sha, body, comments)`: `pr.create_review(..., event="COMMENT")`.
+   - `reply_to_review_comment(pr_number, comment_id, body)`: `pr.create_review_comment_reply`.
+   - `set_thread_resolved(thread_id, resolved)`: GraphQL `resolveReviewThread` / `unresolveReviewThread` through `requester.graphql_named_mutation`.
 
-**Done when:** On a real PR:
-- each finding appears as a thread on its line;
-- a finding whose line is outside the diff appears in the summary only, and the review still posts;
-- fixing a finding in the next commit gets a "✅ Resolved" reply and a resolved thread;
-- a collaborator's reply in a thread is picked up as an explanation.
+   **Done (2026-11-12):** all four. `create_review` asserts a `Commit` object, so `post_inline_comments` looks the head commit up first. GraphQL names the Actions bot `github-actions` (`__typename: Bot`), so `[bot]` is appended for bots only; `Z` timestamps become `+00:00`. Changed from the plan after bot finding F002 on PR #10: `get_review_threads` reads **every** page of threads, not just the first 100 — a thread left out looks like "no thread yet" and its finding would get a duplicate inline comment. Comments are still read up to 100 per thread, with a warning past that.
+2. **Placement:** `commentable_lines(changed_files)` reads the new-side ranges from the hunk headers of the whole PR diff, even on incremental runs. A comment outside the diff gets a 422 error, which fails the whole review.
+
+   **Done (2026-11-12)** in `orchestrator/threads.py`. Files with no new-side lines (deleted, binary, too large for a patch, pure renames) are left out.
+3. **Thread lookup:** `threads_by_finding(threads, bot_login)` reads the marker from a thread's first comment, and only when the bot wrote it.
+
+   **Done (2026-11-12).** `finding_marker(id)` builds the marker, so posting and lookup share it; IDs past `F999` match. If two threads carry the same marker, the newest wins.
+4. **Action plan:** `plan_thread_actions(findings, threads, commentable, head_sha)`:
+
+   | Finding status | Thread | Action |
+   |---|---|---|
+   | `open` / `reopened` | none, line in the diff | new inline comment |
+   | `open` / `reopened` | none, line outside the diff | nothing: summary only |
+   | `resolved` | not yet told "Fixed" | reply "✅ Fixed in `<sha>`", try to resolve |
+   | `rejected` / `closed` | not yet told so | reply "💬 Dismissed" / "✅ Closed.", try to resolve |
+   | `reopened` | last told fixed, dismissed or closed | reply "🔁 Came back in `<sha>`", try to unresolve |
+   | anything else | | nothing |
+
+   **Done (2026-11-12).** Changed from the plan after the PR #10 live run: what a thread was "told" is read from the bot's **latest status reply** in it, not from its resolved flag. `GITHUB_TOKEN` was refused the resolve (see Task 6), so the flag never changes, and planning from it repeated the "Fixed" / "Dismissed" replies on every push. Now each status change gets exactly one reply plus one best-effort resolve or unresolve. Only the bot's own replies count, so a human typing "✅ Fixed" changes nothing. A `closed` finding is told "✅ Closed." rather than "Dismissed", since closed means fixed and verified.
+5. **Explanations:** `thread_replies(...)` turns each non-bot thread reply into a PR-comment-shaped dict, its body prefixed `"<finding id>: "`, and adds them to the comments passed to `developer_replies`. `explanations.py` doesn't change.
+
+   In practice: a developer can now reply "this is intentional because…" right in the thread. Before, they had to write `F003: …` in a PR comment. The same rules apply: only the PR author or collaborators count, and the same judge decides.
+
+   **Done (2026-11-12).** `main.py` merges thread replies with the PR comments, sorted oldest first, before `developer_replies` applies the cutoff and the trust rule.
+6. **Run order in `main.py`:**
+   1. read the threads;
+   2. re-check and explanations;
+   3. review, then post the summary (this saves the state);
+   4. thread actions.
+
+   Thread failures are logged as warnings and don't fail the run.
+
+   **Done (2026-11-12).** Two rules added:
+   - If the threads can't be read, thread actions are skipped for that run. Treating an unread list as "no threads" would post a duplicate comment for every open finding.
+   - A failed post or reply is retried by the next run with new code; a noop run (e.g. "Re-run job" at the same commit) exits before reading threads, so it doesn't retry them (bot finding F003 on PR #10). A failed resolve or unresolve is not retried: the reply already records the status, and the warning says to resolve by hand.
+
+   A noop run doesn't read threads.
+
+   **Decision (2026-11-12): threads are resolved by hand.** On PR #10, `resolveReviewThread` returned `FORBIDDEN — Resource not accessible by integration` for `GITHUB_TOKEN` with `contents: read` + `pull-requests: write`. Community reports say the mutation needs `contents: write`; GitHub doesn't document it. That would also let the token push code, here and in every repo using the reusable workflow, so it isn't granted. The bot replies and the developer clicks "Resolve". A GitHub App token used only for resolving is the option if auto-resolve is wanted later.
+7. **Offline tests:**
+   - hunk parsing;
+   - a marker from a non-bot comment is ignored;
+   - each row of the action table;
+   - thread replies reach the judge, and an outsider's reply is dropped;
+   - the client functions normalise their output.
+
+   **Done (2026-11-12):** `tests/orchestrator/test_threads.py` covers placement, lookup, every row of the action table, the no-repeat rule and thread replies through `developer_replies`. `test_main.py` covers the wiring: post after the summary, nothing off the diff, fixed → reply, thread reply → dismissed, unreadable threads, a failed post, a refused resolve, noop. `uv run pytest`: 343 passed.
+
+**Out of scope:**
+- re-posting outdated threads at their moved line;
+- links from the summary to threads;
+- more than 100 comments in one thread (warned, not read);
+- retiring the `F00x:` convention;
+- resolving threads automatically (needs `contents: write` or an App token; see Task 6).
+
+**Verified live (2026-11-12), on PR #10:**
+- GraphQL reads threads with `GITHUB_TOKEN`; the bot is `{"__typename": "Bot", "login": "github-actions"}` and timestamps look like `2026-11-12T13:19:24Z`, both normalised as planned.
+- `GITHUB_TOKEN` can post inline comments and reply in threads, but **not** resolve them (above).
+
+**Not yet verified:** the exact 422 behaviour for a line outside the diff (placement avoids it, so it hasn't happened).
+
+**Done when:** offline tests pass, and on a real PR:
+- [x] each open finding appears as a thread on its line, and the summary comment still lists everything (PR #10: F001 and F002);
+- [x] a finding whose line is outside the diff appears in the summary only, and the review still posts. Accepted on the offline tests (`test_plan_leaves_an_open_finding_off_the_diff_to_the_summary`, `test_main_posts_no_thread_for_a_finding_off_the_diff`); not seen live, since the reviewer can't be made to file a finding off the diff on demand;
+- [x] fixing a finding gets a "✅ Fixed" reply (PR #10: F002 at `10b4dfc`). The thread stays unresolved by design (Task 6) — the developer resolves it;
+- [x] reintroducing it gets a "🔁 Came back" reply. PR #10: `028d8c9` put F002's bug back (first page of threads only); the re-check moved F002 `resolved → reopened` and the bot replied "🔁 Came back in `028d8c95d9`." (unresolve refused, warning as designed). The revert `5c666ce` moved it back to `resolved` with one new "✅ Fixed in `5c666ce897`." reply;
+- [x] a collaborator's reply in a thread dismisses the finding (PR #10: F001 → `💬 dismissed (developer explained)`, reply "💬 Dismissed" posted);
+- [x] a push with no status changes adds no thread comments. PR #10 at `944949f` (run 43229116729, attempt 2): `[threads] threads already match the state — nothing to do`; F001 and F002 still have exactly one bot reply each, although both threads are unresolved. Attempt 1 failed before any write on GitHub API 503s (`requests.exceptions.RetryError`, not in `main()`'s handled errors, so a traceback instead of a `[failed]` line).
 
 ---
 
@@ -428,7 +503,7 @@ graph/__init__.py
 Also adds `langgraph` via `uv add langgraph`. `main.py` shrinks to: parse args → invoke the graph.
 
 **Tasks:**
-1. Nodes: `load_memory` → `build_diff` → `recheck` → `explain` → `review` → `judge_placeholder` (passthrough) → `update_memory` → `post_review`. `recheck` and `explain` come before `review` because Step 9 runs them first: the reviewer is shown the updated statuses and must not repeat dismissed or resolved findings.
+1. Nodes: `load_memory` → `build_diff` → `recheck` → `explain` → `review` → `judge_placeholder` (passthrough) → `update_memory` → `post_review` → `sync_threads` (Step 9b's thread actions). `recheck` and `explain` come before `review` because Step 9 runs them first: the reviewer is shown the updated statuses and must not repeat dismissed or resolved findings.
 2. State = a typed dict wrapping `PRContext` + intermediate results.
 3. No behavior change — outputs identical to Step 9b's.
 
