@@ -46,6 +46,11 @@ on:
         required: false
         type: string
         default: ""
+      log_level:
+        description: "DEBUG | INFO | WARNING | ERROR — empty → INFO"
+        required: false
+        type: string
+        default: ""
     # Secrets the caller passes in. A called workflow cannot reach the
     # caller repo's secrets unless they are explicitly passed. Only the one
     # matching model_provider needs a value; pass the rest empty.
@@ -105,6 +110,7 @@ jobs:
           GOOGLE_MODEL: ${{ inputs.google_model }}
           OPENAI_MODEL: ${{ inputs.openai_model }}
           CLAUDE_MODEL: ${{ inputs.claude_model }}
+          LOG_LEVEL: ${{ inputs.log_level }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
