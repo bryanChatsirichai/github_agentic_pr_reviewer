@@ -13,6 +13,87 @@ guide shows how to set that up.
 | **Reusable workflow** | [`.github/workflows/pr-review-reusable.yml`](../.github/workflows/pr-review-reusable.yml) in the reviewer repo. It downloads the reviewer code, runs the review, and posts the result on the target repo's PR. |
 | **`your-name`** | A placeholder. Replace it with your own GitHub user name. |
 
+## How it works: two flows
+
+The reviewer runs in two ways. Each uses different workflow files and reads
+settings from a different repo.
+
+### Flow 1: the reviewer repo reviews its own PRs
+
+**One file:** [`.github/workflows/pr-review.yml`](../.github/workflows/pr-review.yml)
+in the reviewer repo.
+
+```mermaid
+flowchart TB
+    A["① PR opened or new commit<br/>in the reviewer repo"]
+    B["② pr-review.yml<br/>• checks out the PR's own code<br/>• reads the reviewer repo's variables + secrets"]
+    C["③ Runs the reviewer"]
+    D["④ Review comment on the PR"]
+    A --> B --> C --> D
+```
+
+It checks out the PR's own code, so a PR that changes the reviewer is reviewed
+by its own changes.
+
+### Flow 2: another repo calls the reviewer
+
+**Two files, one in each repo:**
+
+| File | Repo | Job |
+|---|---|---|
+| `.github/workflows/pr-review.yml` (copy of [`templates/pr-review-caller.yml`](../templates/pr-review-caller.yml)) | Target repo | Starts on a PR, reads the target repo's variables and secrets, and passes them on |
+| [`.github/workflows/pr-review-reusable.yml`](../.github/workflows/pr-review-reusable.yml) | Reviewer repo | Receives the values, checks out the reviewer code from `main`, and runs the review |
+
+```mermaid
+flowchart TB
+    subgraph target ["Target repo (e.g. chrome_sidebar_extension)"]
+        direction TB
+        T1["① PR opened or new commit"]
+        T2["② pr-review.yml (caller)<br/>with: model_provider, openai_model, log_level …<br/>secrets: OPENAI_API_KEY …"]
+        T5["⑤ Review comment on the PR"]
+    end
+    subgraph reviewer ["Reviewer repo, read from GitHub main"]
+        direction TB
+        R3["③ pr-review-reusable.yml<br/>• accepts only names listed under inputs:<br/>• turns them into env vars<br/>• checks out the reviewer code from main"]
+        R4["④ Runs the reviewer"]
+    end
+    T1 --> T2
+    T2 -- "uses: …/pr-review-reusable.yml@main" --> R3
+    R3 --> R4
+    R4 --> T5
+```
+
+The reviewer repo's own variables and secrets are **not** used in this flow.
+Everything comes from the target repo.
+
+### Side by side
+
+| | Flow 1: self-review | Flow 2: another repo |
+|---|---|---|
+| Workflow files | 1: `pr-review.yml` | 2: the caller in the target repo and `pr-review-reusable.yml` in the reviewer repo |
+| Settings come from | The reviewer repo | The target repo |
+| Reviewer code that runs | The PR's own code | The reviewer repo's `main` on GitHub |
+| Adding a new setting (e.g. `LOG_LEVEL`) | Add one `env:` line | Add it to **both** files and merge the reviewer repo first (see below) |
+
+### Adding a new setting to Flow 2
+
+The caller can only pass values the reusable workflow lists under `inputs:`.
+GitHub rejects anything else with `Invalid input, <name> is not defined in the
+referenced workflow`, before the job starts. So a new setting needs three
+changes, in this order:
+
+1. **Reviewer repo, `pr-review-reusable.yml`:** add the input under `inputs:`,
+   and map it in the `env:` block of the "Run PR reviewer" step, e.g.
+   `LOG_LEVEL: ${{ inputs.log_level }}`.
+2. **Merge that to the reviewer repo's `main`.** Callers always use the
+   version on GitHub's `main`, not a local copy or another branch.
+3. **Target repo, caller workflow:** pass the value, e.g.
+   `log_level: ${{ vars.LOG_LEVEL }}`. Also update
+   [`templates/pr-review-caller.yml`](../templates/pr-review-caller.yml) so
+   new repos get it.
+
+Secrets work the same way, through the `secrets:` blocks in both files.
+
 ## Which setup do I need?
 
 | You are… | Use | Reviewer repo |
@@ -215,6 +296,7 @@ commits, that also discards this edit. Redo it after syncing.
 | No **pr-review** run appears for the PR | The PR has merge conflicts (GitHub doesn't run `pull_request` workflows on conflicted PRs), or the file isn't at `.github/workflows/pr-review.yml` | Resolve the conflicts, or check the file path |
 | The run shows **Skipped** | The PR comes from a fork. The template's `if:` skips those on purpose | Expected. Only branches inside the target repo are reviewed |
 | The PR shows **Approve workflows to run** | An outside contributor opened it (setup step 3) | Expected. Approving it still won't run a review, because the job is skipped |
+| The run fails right away with `Invalid input, <name> is not defined in the referenced workflow` | The caller passes a value the reviewer repo's `main` doesn't accept yet | Merge the reviewer repo change first ([Adding a new setting](#adding-a-new-setting-to-flow-2)), or remove that line from the caller |
 | The run fails right away, mentioning the called workflow | The `uses:` path, owner or `@main` is wrong | Compare the `uses:` line with the template, character by character |
 | **Check out reviewer code** fails | Fork users: `repository:` in your fork's reusable workflow is wrong, or the fork isn't public | Redo [Step 1.2](#step-1-fork-the-reviewer-once) |
 | Log says `MODEL_PROVIDER is not set` or `is not a known provider` | The `MODEL_PROVIDER` variable is missing, misspelled, or was added as a secret instead of a variable | Add it on the target repo's *Variables* tab: `google`, `openai` or `claude` |
