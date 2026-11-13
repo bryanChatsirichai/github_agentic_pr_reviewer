@@ -135,16 +135,16 @@ flowchart LR
         CW["pr-review.yml<br/>from templates/pr-review-caller.yml"]
         CPR[(Caller PR)]
     end
-    subgraph this ["This repo (public)"]
+    subgraph this ["Reviewer repo (public): this repo for the owner, or a user's fork"]
         RW["pr-review-reusable.yml<br/>workflow_call"]
         CODE["orchestrator + agents<br/>checked out at main"]
     end
-    CW -->|"① uses: …@main · with: model_provider<br/>secrets: provider keys only"| RW
-    RW -->|"② checkout pinned to this repo"| CODE
+    CW -->|"① uses: owner/…@main · with: model_provider<br/>secrets: provider keys only"| RW
+    RW -->|"② checkout pinned to the reviewer repo"| CODE
     CODE -->|"③ caller's github.token<br/>posts the review comment"| CPR
 ```
 
-In a called workflow, `github.token`, `github.repository` and `github.event` belong to the **caller**, so the reviewer posts on the caller's PR with the caller's permissions. The checkout is pinned to this repo (the default would fetch the caller's). Callers forward only the provider keys, never `secrets: inherit`. The self-review workflow stays a separate file, because `github.event.pull_request.*` would resolve to the wrong PR in a shared file. Details: [`multi-repo-integration.md`](multi-repo-integration.md).
+The owner's repos call this repo; anyone else forks it and points both the caller's `uses:` and the reusable checkout at the fork. In a called workflow, `github.token`, `github.repository` and `github.event` belong to the **caller**, so the reviewer posts on the caller's PR with the caller's permissions. The checkout is pinned to the reviewer repo (the default would fetch the caller's). Callers forward only the provider keys, never `secrets: inherit`. The self-review workflow stays a separate file, because `github.event.pull_request.*` would resolve to the wrong PR in a shared file. Details: [`multi-repo-integration.md`](multi-repo-integration.md).
 
 **Technology**
 

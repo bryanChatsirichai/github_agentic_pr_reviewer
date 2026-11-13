@@ -1,22 +1,10 @@
 # ============================================================================
 # Agentic PR Reviewer — reusable workflow
 # ============================================================================
-# Lets OTHER repositories run this reviewer on their PRs. A caller repo adds
-# a workflow like (see templates/pr-review-caller.yml for a full example):
+# Lets OTHER repositories run this reviewer on their PRs. A target repo copies
+# templates/pr-review-caller.yml; setup guide: docs/multi-repo-integration.md.
 #
-#   on:
-#     pull_request:
-#       types: [opened, synchronize, reopened]
-#   jobs:
-#     review:
-#       uses: bryanChatsirichai/github_agentic_pr_reviewer/.github/workflows/pr-review-reusable.yml@main
-#       with:
-#         model_provider: google        # google | openai | claude
-#         google_model: ${{ vars.GOOGLE_MODEL }}   # optional override
-#       secrets:
-#         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-#         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-#         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+# Fork users: also change the checkout `repository:` below to your fork.
 #
 # Key semantics of a *called* workflow:
 #   - github.repository → the CALLING repo (e.g. repo-A), not this repo.
@@ -82,9 +70,9 @@ jobs:
 
     steps:
       # In a called workflow, the default checkout would fetch the CALLER's
-      # repo (where orchestrator/ does not exist), so pin to this repo. It is
-      # public, so the caller's default token is enough. shortcut: if this
-      # repo goes private, the caller must pass a PAT for this checkout.
+      # repo (where orchestrator/ does not exist), so pin to this repo — in a
+      # fork, set this to the fork. It is public, so the caller's default
+      # token is enough. If it goes private, the caller must pass a PAT.
       - name: Check out reviewer code
         uses: actions/checkout@v4
         with:

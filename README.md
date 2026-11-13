@@ -73,23 +73,12 @@ Read from `.env` (loaded automatically) or the surrounding environment. See [`.e
 
 ## Using the reviewer on other repositories
 
-The reviewer reads only `GITHUB_TOKEN` / `GITHUB_REPOSITORY` from the
-environment and talks to the GitHub API, so it can review any repo. To review
-PRs in another repo, copy the caller workflow template
-[`templates/pr-review-caller.yml`](templates/pr-review-caller.yml) into that
-repo as `.github/workflows/pr-review.yml` (push to the default branch). The
-template ships with commented-out security gates — fork blocking, author
-allowlists, target-branch restrictions — uncomment the ones you want:
+Any repo can be reviewed. It needs one workflow file, a copy of
+[`templates/pr-review-caller.yml`](templates/pr-review-caller.yml), and one
+API key secret.
 
-Full guide — how token/repository context flows from caller to reusable
-workflow, setup steps, caveats (fork PRs, permissions, private-repo
-limitations), and the alternatives considered:
-[`docs/multi-repo-integration.md`](docs/multi-repo-integration.md)
+- **Repo owner**: target repos call this repo directly.
+- **Everyone else**: fork this repo and point the template at your fork.
 
-Notes:
-- This repo must stay **public** for the checkout in `pr-review-reusable.yml`
-  to work without a PAT; a private move requires passing a PAT instead.
-- `pull_request` workflows only fire from a repo's **default branch** — push the
-  caller file to `main` first, then open a PR to see it run.
-- The reviewer code always runs from this repo's `main` (see the reusable
-  workflow's checkout `ref`). Pin to a tag to control upgrade timing.
+Step-by-step setup for both, with diagrams and who can trigger a review:
+[`docs/multi-repo-integration.md`](docs/multi-repo-integration.md).
