@@ -46,6 +46,9 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
+    # This doesn't call the reviewer repo; it borrows its workflow file.
+    # The steps run here, in this repo: this repo's token and secrets,
+    # and the run shows in this repo's Actions tab, not the reviewer's.
     # Fork users: replace the owner in this path with your GitHub user name.
     uses: bryanChatsirichai/github_agentic_pr_reviewer/.github/workflows/pr-review-reusable.yml@main
     # All values come from this repo's Actions *variables*, so switching
