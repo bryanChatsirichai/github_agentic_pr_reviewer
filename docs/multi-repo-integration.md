@@ -40,8 +40,8 @@ The rule is the same for both setups: put the API key in **the target repo**
 
 | Repo | Needs the API key? | Why |
 |---|---|---|
-| **Target repo** | **Yes** | Its caller workflow reads the secret and passes it to the reviewer in the `secrets:` block. |
-| **Reviewer repo** | **No** | A reusable workflow only gets the secrets the caller passes in. It never reads its own repo's secrets. |
+| **Target repo** | **Yes**, plus the `MODEL_PROVIDER` variable | Its caller workflow reads them and passes them to the reviewer. |
+| **Reviewer repo** | **No** | A reusable workflow only gets the secrets and values the caller passes in. It never reads its own repo's secrets or variables. |
 
 There is one exception. If you also want the reviewer repo to **review its own
 PRs** (with its own `pr-review.yml`), that repo needs a `MODEL_PROVIDER` repo
@@ -86,27 +86,31 @@ flowchart TB
 
 ### For each target repo
 
-1. **Add the API key secret.** In the target repo, go to Settings → Secrets
-   and variables → Actions → *New repository secret*. Use the exact name for
-   your provider:
+1. **Add the API key secret and the provider variable.** In the target repo,
+   go to Settings → Secrets and variables → Actions. Add the key on the
+   *Secrets* tab and `MODEL_PROVIDER` on the *Variables* tab, with the exact
+   names for your provider:
 
-   | Provider | Secret name | `model_provider` value (step 4) |
-   |---|---|---|
-   | Google (Gemini) | `GOOGLE_API_KEY` | `google` |
-   | OpenAI | `OPENAI_API_KEY` | `openai` |
-   | Anthropic (Claude) | `ANTHROPIC_API_KEY` | `claude` |
+   | Provider | Secret name | `MODEL_PROVIDER` variable | Optional model variable |
+   |---|---|---|---|
+   | Google (Gemini) | `GOOGLE_API_KEY` | `google` | `GOOGLE_MODEL` |
+   | OpenAI | `OPENAI_API_KEY` | `openai` | `OPENAI_MODEL` |
+   | Anthropic (Claude) | `ANTHROPIC_API_KEY` | `claude` | `CLAUDE_MODEL` |
 
-2. **Optional: choose a model.** On the same page, open the *Variables* tab and
-   add `GOOGLE_MODEL`, `OPENAI_MODEL` or `CLAUDE_MODEL`. Leave it out to use the
-   provider's default model.
+   To switch provider later, add the other key and change `MODEL_PROVIDER`.
+   The workflow file doesn't change.
+
+2. **Optional: choose a model or log level.** On the *Variables* tab, add the
+   model variable from the table, or `LOG_LEVEL` = `DEBUG` for detailed logs.
+   Leave them out to use the provider's default model and INFO logs.
 3. **Require approval for outside PRs.** Go to Settings → Actions → General →
    *Approval for running fork pull request workflows* and choose **Require
    approval for all external contributors**. Workflows on PRs from strangers
    then wait until you approve them.
 4. **Add the caller workflow.** On a new branch, copy
    [`templates/pr-review-caller.yml`](../templates/pr-review-caller.yml) to
-   `.github/workflows/pr-review.yml`. Set `model_provider:` to the value from
-   the table in step 1.
+   `.github/workflows/pr-review.yml`. No edits are needed. It reads everything
+   from the variables and secrets in steps 1–2.
 5. **Open a PR from that branch.** The PR that adds the file triggers its own
    review, so you can [check that it works](#check-that-it-works) before
    merging. Then merge it.
@@ -170,17 +174,15 @@ flowchart TB
 ### Step 2: Set up each target repo
 
 1. Do steps 1–3 of the [owner setup's per-repo list](#for-each-target-repo):
-   add the API key secret, optionally choose a model, and require approval for
-   outside PRs.
+   add the API key secret and `MODEL_PROVIDER` variable, optionally choose a
+   model, and require approval for outside PRs.
 2. On a new branch, copy
    [`templates/pr-review-caller.yml`](../templates/pr-review-caller.yml) to
    `.github/workflows/pr-review.yml`. Change the `uses:` line to your fork:
    ```yaml
    uses: your-name/github_agentic_pr_reviewer/.github/workflows/pr-review-reusable.yml@main
    ```
-3. Set `model_provider:` to the value that matches your secret (see the
-   [provider table](#for-each-target-repo)).
-4. Open a PR from that branch. It triggers its own review, so you can
+3. Open a PR from that branch. It triggers its own review, so you can
    [check that it works](#check-that-it-works). Then merge it.
 
 ### Getting updates from upstream
@@ -215,8 +217,10 @@ commits, that also discards this edit. Redo it after syncing.
 | The PR shows **Approve workflows to run** | An outside contributor opened it (setup step 3) | Expected. Approving it still won't run a review, because the job is skipped |
 | The run fails right away, mentioning the called workflow | The `uses:` path, owner or `@main` is wrong | Compare the `uses:` line with the template, character by character |
 | **Check out reviewer code** fails | Fork users: `repository:` in your fork's reusable workflow is wrong, or the fork isn't public | Redo [Step 1.2](#step-1-fork-the-reviewer-once) |
-| Log says `MODEL_PROVIDER is not set` or `is not a known provider` | `model_provider:` is missing or misspelled | Use `google`, `openai` or `claude` |
-| Log says `GOOGLE_API_KEY is not set` (or the OpenAI / Anthropic name) | The secret is missing, has a different name, or was added to the reviewer repo instead of the target repo | Add it to the **target repo** with the exact name from the provider table |
+| Log says `MODEL_PROVIDER is not set` or `is not a known provider` | The `MODEL_PROVIDER` variable is missing, misspelled, or was added as a secret instead of a variable | Add it on the target repo's *Variables* tab: `google`, `openai` or `claude` |
+| Log says `GOOGLE_API_KEY is not set` (or the OpenAI / Anthropic name) | The key for the provider in `MODEL_PROVIDER` is missing, has a different name, or was added to the reviewer repo instead | Add it to the **target repo** with the exact name from the provider table. The key must match `MODEL_PROVIDER` |
+| Log says the model was not found | The model variable (e.g. `OPENAI_MODEL`) names a model your provider account can't use | Fix or delete the variable. Deleting it uses the default model |
+| VS Code warns `Context access might be invalid` | The editor can't find that secret on GitHub, usually a provider you don't use | Harmless. Missing secrets are passed as empty strings |
 | Log ends with `[failed] exit 1, nothing posted` | An error during the review. The text after `—` names it | Read that message. For a provider error, check the key and your account's quota |
 | Posting fails with `403` / `Resource not accessible by integration` | The `permissions:` block was removed or changed in the caller workflow | Restore `contents: read` and `pull-requests: write` |
 
@@ -247,5 +251,5 @@ PRs from outsiders.
 | Secrets | The caller passes only the API key secrets. Don't use `secrets: inherit`, which would pass every secret in the target repo. |
 | Upgrade timing | Target repos always run the reviewer repo's `main`. To control upgrades, replace `@main` in `uses:` *and* `ref: main` in the reusable checkout with the same tag or commit SHA. |
 | Manual run | The **Run workflow** button only appears once the file is on the target repo's default branch. A manual run has no PR, so it only runs a smoke test that checks the GitHub token and the API key. |
-| Debug logs | Target repos always log at INFO. `LOG_LEVEL` isn't passed through the reusable workflow, so it only affects the reviewer repo's own self-review. |
+| Debug logs | Set the target repo's `LOG_LEVEL` variable to `DEBUG`. Unset means INFO. |
 | Why two workflow files | The reviewer repo reviews itself with `pr-review.yml` and serves other repos with `pr-review-reusable.yml`. A single shared file would read `github.event.pull_request.*` from the wrong PR. |
