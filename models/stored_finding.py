@@ -16,7 +16,7 @@ from models.finding import FindingStatus, Severity
 
 #: Cap on a stored description. Comment bodies max out at 65,536 chars and
 #: the visible review shares that budget with the state block.
-MAX_DESCRIPTION_CHARS = 300
+MAX_DESCRIPTION_CHARS = 1_000
 
 #: Cap on a stored rejection reason: one sentence, kept short for the same
 #: comment-size budget.

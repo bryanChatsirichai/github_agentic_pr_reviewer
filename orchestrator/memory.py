@@ -93,7 +93,7 @@ STATE_BLOCK_SUFFIX = " -->"
 
 #: Cap on the whole block. Comment bodies max out at 65,536 chars, and the
 #: visible review needs the rest.
-MAX_STATE_BLOCK_CHARS = 20_000
+MAX_STATE_BLOCK_CHARS = 40_000
 
 #: Finished findings — the only ones safe to drop when the block is too big.
 _DROPPABLE_STATUSES = (FindingStatus.CLOSED, FindingStatus.REJECTED)

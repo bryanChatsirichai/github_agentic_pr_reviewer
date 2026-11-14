@@ -355,7 +355,7 @@ There are two kinds of finding on purpose:
 | `id` | the LLM's own numbering, discarded | stable, from `next_id`, never reused |
 | `status` | always `new` | never `new` (section 6.3) |
 | Extra fields | — | `rejected_by`, `snippet`, `thread_id` (always `null`: threads are found by marker, section 11.2; kept because every saved block contains it), `explained_by`, `rejection_reason` |
-| Limits | — | `line ≥ 1`; `description`, `rejection_reason` ≤ 300 chars; `extra="forbid"` |
+| Limits | — | `line ≥ 1`; `description` ≤ 1,000 chars, `rejection_reason` ≤ 300 chars; `extra="forbid"` |
 
 Enums: `Severity` = `low | medium | high | critical` (independent of `confidence`). `Rating` = `approve | comment | request_changes`. `DiffMode` = `full | incremental | noop`. `ReviewState()` with no arguments is the empty state: full review, IDs start at `F001`. Validation enforces unique IDs and `next_id` greater than every stored ID.
 
@@ -396,7 +396,7 @@ flowchart TD
 
 **Save** (`save_memory`): the block is appended to the review body and posted with it. **Posting is saving** — there is no separate write, so the stored state always matches what the developer saw, a failed post saves nothing, and older comments are free history. Every run with new code posts, so the newest comment always describes the newest commit.
 
-**Encoding and size.** After serialisation `<` and `>` are escaped, so a snippet containing `-->` cannot close the HTML comment. The block is capped at 20,000 chars (`MAX_STATE_BLOCK_CHARS`; comment bodies max out at 65,536). Over the cap, the oldest `closed`/`rejected` findings are dropped first; if it still does not fit, the run raises `StateTooLargeError` and posts nothing. Open findings are never dropped, because a lost one would be re-reported under a new ID.
+**Encoding and size.** After serialisation `<` and `>` are escaped, so a snippet containing `-->` cannot close the HTML comment. The block is capped at 40,000 chars (`MAX_STATE_BLOCK_CHARS`; comment bodies max out at 65,536). Over the cap, the oldest `closed`/`rejected` findings are dropped first; if it still does not fit, the run raises `StateTooLargeError` and posts nothing. Open findings are never dropped, because a lost one would be re-reported under a new ID.
 
 `load_memory` / `save_memory` are the only interface, so a database could replace the storage without touching callers.
 
@@ -447,7 +447,7 @@ Commit 3   F001 → reopened     (bug reintroduced)
 
 - **IDs.** `allocate_ids` hands out `F{next_id:03d}` (growing a digit past `F999`). The counter only grows, so an ID is never reused, even after its finding is trimmed.
 - **Snippets.** `cut_snippet` takes lines `line ± 3` from the **head file**, never from the LLM (which paraphrases and re-indents). Clamped at file ends; a line past EOF gives `""`; CRLF normalised. When a re-check finds a still-present defect at a new line, `line` and `snippet` are updated **together** (`locate_line` relies on the pairing); a resolved finding keeps its original snippet, which is the faulty code a regression would bring back.
-- **Filing.** Untrusted LLM fields are coerced rather than failing the review: line below 1 → 1; description over 300 chars → cut with `…` (the comment shows it in full).
+- **Filing.** Untrusted LLM fields are coerced rather than failing the review: line below 1 → 1; description over 1,000 chars → cut with `…` (the comment shows it in full).
 - **Dedupe** (`drop_duplicates`, before IDs are allocated). A reviewer finding duplicates an earlier one (a known stored finding, or one earlier in the same batch) when it is in the **same file** and either the normalised titles are equal, or the lines are within ±3 **and** the titles have a `difflib` ratio ≥ 0.6. Snippets are not compared (a 2-line drift breaks an exact match), and line proximity alone never merges (two real bugs on adjacent lines must both survive).
 
 ---
@@ -800,7 +800,7 @@ Each call can retry once on an unusable answer, so the worst case is twice these
 
 - Most previous findings cost nothing (blob-SHA skip). Head files are fetched once per run and shared between the re-check, the judge and new-finding snippets.
 - `locate_line` takes about 0.07 s for an exact match on a 10,000-line file (cheap upper bounds, nearest-first search, early exit).
-- State block ≤ 20,000 chars; per-finding text capped at 300 chars.
+- State block ≤ 40,000 chars; descriptions capped at 1,000 chars, rejection reasons at 300.
 
 ### 9.4 Observability
 
@@ -982,7 +982,7 @@ Read-only plain functions in `tools/`, bound to reviewers through the factory; M
 | One re-check call per finding | Several findings in one edited file cost several calls; batch per file if cost matters |
 | "Re-run job" does not retry a failed thread action | A same-commit re-run is noop and touches no threads; the failed post or reply is redone by the next run with new code (a push touching only files outside the PR is noop too). The summary comment lists every finding meanwhile |
 | Threads are not resolved automatically | `GITHUB_TOKEN` is refused `resolveReviewThread`; the bot replies and the developer resolves. Fix if wanted: a GitHub App token for the resolve only (section 11.2) |
-| Inline comments show the stored description | Cut at 300 chars with `…`; the summary comment has the full text |
+| Inline comments show the stored description | Cut at 1,000 chars with `…`; the summary comment has the full text |
 | Outdated threads stay where they were | A finding whose code moved keeps its thread on the old line; not re-posted |
 | Replies are read on the next run with new code | No `issue_comment` trigger yet |
 | PR comments listed up to three times per run | Cheap; could be merged |

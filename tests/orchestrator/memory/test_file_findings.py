@@ -55,7 +55,7 @@ def test_line_below_one_is_stored_as_one() -> None:
 
 def test_long_description_is_capped() -> None:
     stored, _ = file_new_findings(
-        ReviewState(), [make_finding(description="x" * 1000)], {"src/cli.py": CLI}
+        ReviewState(), [make_finding(description="x" * (MAX_DESCRIPTION_CHARS + 500))], {"src/cli.py": CLI}
     )
 
     assert len(stored[0].description) == MAX_DESCRIPTION_CHARS

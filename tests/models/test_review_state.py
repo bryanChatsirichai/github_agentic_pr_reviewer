@@ -7,6 +7,7 @@ these tests pin down what validation must reject.
 import pytest
 from pydantic import ValidationError
 
+from models.stored_finding import MAX_DESCRIPTION_CHARS
 from tests.helpers import make_review_state, make_stored_finding
 
 
@@ -17,7 +18,7 @@ from tests.helpers import make_review_state, make_stored_finding
         {"status": "rejected"},  # rejected without rejected_by
         {"status": "open", "rejected_by": "critic"},  # rejected_by on non-rejected
         {"status": "rejected", "rejected_by": "bot"},  # unknown rejecter
-        {"description": "x" * 301},  # over the 300-char cap
+        {"description": "x" * (MAX_DESCRIPTION_CHARS + 1)},  # over the cap
         {"line": 0},  # lines are 1-based
         {"id": "X001"},  # not an F-number
         {"confidence": 1.01},  # outside [0, 1]

@@ -53,10 +53,10 @@ def _repo_with_comments(*comments: tuple[str, str]):
 
 
 def _big_finding(number: int, status: str = "open"):
-    """A finding whose snippet alone takes ~3k chars of the block budget."""
+    """A finding whose snippet alone takes ~6k chars of the block budget."""
     rejected_by = "critic" if status == "rejected" else None
     return make_stored_finding(
-        id=f"F{number:03d}", status=status, rejected_by=rejected_by, snippet="x" * 3_000
+        id=f"F{number:03d}", status=status, rejected_by=rejected_by, snippet="x" * 6_000
     )
 
 
@@ -82,7 +82,7 @@ def test_snippet_with_comment_terminator_cannot_close_block_early() -> None:
 
 
 def test_oversized_state_drops_oldest_closed_and_rejected_first() -> None:
-    # 8 × ~3k > 20k cap: F001–F004 are droppable, F005–F008 must survive.
+    # 8 × ~6k > 40k cap: F001–F004 are droppable, F005–F008 must survive.
     findings = [
         _big_finding(1, "closed"),
         _big_finding(2, "rejected"),
