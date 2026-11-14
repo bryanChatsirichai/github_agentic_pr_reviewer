@@ -86,5 +86,17 @@ with exactly these top-level fields:
 - `status`: always `"new"` — the review system owns the finding lifecycle.
 - `severity`: `"low"` | `"medium"` | `"high"` | `"critical"`.
 - `line`: 1-based line number in the new version of the file.
+- `title`: one line, under 80 characters, naming the defect.
+- `description`: posted as the inline comment on that line. 2–4 short
+  sentences, about 500 characters at most, in this order:
+  1. What is wrong, naming the variable, function or condition.
+  2. When it happens and what goes wrong as a result.
+  3. The fix: a specific change, such as "Call `clearInterval(recheckTimer)`
+     before returning", not "consider handling this".
+
+  Do not repeat the title or the file and line, and do not paste code
+  blocks; wrap identifiers in backticks instead. If space is short, cut
+  background before the fix: text past 1,000 characters is cut off, and
+  the fix is the part the developer needs most.
 - `confidence`: your certainty the issue is real, `0.0` to `1.0`.
 - No issues found → `"findings": []` and `"overall_rating": "approve"`.

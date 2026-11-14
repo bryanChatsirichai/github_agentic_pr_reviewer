@@ -66,7 +66,10 @@ class Finding(BaseModel):
     line: int = Field(description="1-based line number in ``file`` the issue refers to.")
     title: str = Field(description="One-line summary of the issue.")
     description: str = Field(
-        description="What the issue is, why it matters, and how to fix it."
+        description=(
+            "2-4 sentences, about 500 characters at most: what is wrong, "
+            "when it happens and its effect, then the specific fix."
+        )
     )
     confidence: float = Field(
         ge=0.0,
